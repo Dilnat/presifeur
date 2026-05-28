@@ -1,24 +1,38 @@
 package presifeur.model
 
 enum Suit:
-  case Spades, Hearts, Diamonds, Clubs
+  case Piques, Coeurs, Carreaux, Trefles
+
+  def symbole: String = this match
+    case Piques   => "♠"
+    case Coeurs   => "♥"
+    case Carreaux => "♦"
+    case Trefles  => "♣"
 
 enum Rank(val value: Int):
-  case Three  extends Rank(3)
-  case Four   extends Rank(4)
-  case Five   extends Rank(5)
+  case Trois  extends Rank(3)
+  case Quatre extends Rank(4)
+  case Cinq   extends Rank(5)
   case Six    extends Rank(6)
-  case Seven  extends Rank(7)
-  case Eight  extends Rank(8)
-  case Nine   extends Rank(9)
-  case Ten    extends Rank(10)
-  case Jack   extends Rank(11)
-  case Queen  extends Rank(12)
-  case King   extends Rank(13)
-  case Ace    extends Rank(14)
-  case Two    extends Rank(15) // Two is the highest card in président
+  case Sept   extends Rank(7)
+  case Huit   extends Rank(8)
+  case Neuf   extends Rank(9)
+  case Dix    extends Rank(10)
+  case Valet  extends Rank(11)
+  case Dame   extends Rank(12)
+  case Roi    extends Rank(13)
+  case As     extends Rank(14)
+  case Deux   extends Rank(15) // le Deux est la carte la plus haute au président
+
+  def courte: String = this match
+    case Valet => "V"
+    case Dame  => "D"
+    case Roi   => "R"
+    case As    => "A"
+    case Deux  => "2"
+    case other => other.value.toString
 
 case class Card(rank: Rank, suit: Suit):
-  override def toString: String = s"${rank.toString.head}${suit.toString.head}"
+  override def toString: String = s"${rank.courte}${suit.symbole}"
 
 given Ordering[Card] = Ordering.by(_.rank.value)

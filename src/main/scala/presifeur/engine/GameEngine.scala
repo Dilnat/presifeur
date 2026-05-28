@@ -12,7 +12,7 @@ object GameEngine:
       Player(i, name, hands(i))
     }.toVector
     // Player holding 3♣ goes first
-    val firstIdx = players.indexWhere(_.hand.exists(c => c.rank == Rank.Three && c.suit == Suit.Clubs))
+    val firstIdx = players.indexWhere(_.hand.exists(c => c.rank == Rank.Trois && c.suit == Suit.Trefles))
     GameState(players, firstIdx.max(0), None, 0, Nil, 1)
 
   def applyPlay(state: GameState, cards: List[Card]): Either[String, GameState] =
@@ -54,10 +54,10 @@ object GameEngine:
   def assignRoles(finishOrder: List[Int], players: Vector[Player]): Vector[Player] =
     val n = players.size
     val roles = n match
-      case 3 => List(Role.President, Role.Neutral, Role.Asshole)
-      case 4 => List(Role.President, Role.VicePresident, Role.ViceAsshole, Role.Asshole)
+      case 3 => List(Role.President, Role.Neutre, Role.Trouduc)
+      case 4 => List(Role.President, Role.VicePresident, Role.ViceTrouduc, Role.Trouduc)
       case _ => List(Role.President, Role.VicePresident) ++
-                List.fill(n - 4)(Role.Neutral) ++
-                List(Role.ViceAsshole, Role.Asshole)
+                List.fill(n - 4)(Role.Neutre) ++
+                List(Role.ViceTrouduc, Role.Trouduc)
     val roleMap = finishOrder.zip(roles).toMap
     players.map(p => p.copy(role = roleMap.get(p.id)))

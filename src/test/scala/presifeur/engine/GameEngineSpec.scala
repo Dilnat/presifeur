@@ -6,37 +6,35 @@ import presifeur.model.*
 
 class GameEngineSpec extends AnyFlatSpec with Matchers:
 
-  val players = List("Alice", "Bob", "Carol")
+  val joueurs = List("Alice", "Bob", "Carol")
 
-  "GameEngine.newGame" should "deal all 52 cards" in:
-    val state = GameEngine.newGame(players)
+  "GameEngine.newGame" should "distribuer les 52 cartes" in:
+    val state = GameEngine.newGame(joueurs)
     state.players.map(_.cardCount).sum shouldBe 52
 
-  it should "require at least 3 players" in:
+  it should "exiger au moins 3 joueurs" in:
     an[IllegalArgumentException] should be thrownBy GameEngine.newGame(List("A", "B"))
 
-  "GameEngine.applyPlay" should "reject cards the player doesn't hold" in:
-    val state = GameEngine.newGame(players)
-    val fakeCard = Card(Rank.Ace, Suit.Spades)
-    val currentHand = state.currentPlayer.hand
-    val notInHand = List(fakeCard).filterNot(currentHand.contains)
+  "GameEngine.applyPlay" should "refuser des cartes que le joueur ne possède pas" in:
+    val state    = GameEngine.newGame(joueurs)
+    val fakeCard = Card(Rank.As, Suit.Piques)
+    val notInHand = List(fakeCard).filterNot(state.currentPlayer.hand.contains)
     if notInHand.nonEmpty then
       GameEngine.applyPlay(state, notInHand).isLeft shouldBe true
 
-  "GameEngine.applyPass" should "clear the table when all others have passed" in:
-    val state = GameEngine.newGame(players)
-    // Simulate two consecutive passes (3 players, so 2 passes clears)
+  "GameEngine.applyPass" should "vider la table quand tous les autres ont passé" in:
+    val state = GameEngine.newGame(joueurs)
     val s1 = GameEngine.applyPass(state).toOption.get
     val s2 = GameEngine.applyPass(s1).toOption.get
     s2.lastPlay shouldBe None
 
-  "Play" should "beat a lower play of the same size" in:
-    val low  = Play(List(Card(Rank.Five, Suit.Hearts))).toOption.get
-    val high = Play(List(Card(Rank.King, Suit.Spades))).toOption.get
-    high.beats(low) shouldBe true
-    low.beats(high) shouldBe false
+  "Play" should "battre une combinaison plus faible de même taille" in:
+    val basse  = Play(List(Card(Rank.Cinq, Suit.Coeurs))).toOption.get
+    val haute  = Play(List(Card(Rank.Roi, Suit.Piques))).toOption.get
+    haute.beats(basse) shouldBe true
+    basse.beats(haute) shouldBe false
 
-  it should "not beat a play of different size" in:
-    val single = Play(List(Card(Rank.King, Suit.Spades))).toOption.get
-    val pair   = Play(List(Card(Rank.Ace, Suit.Hearts), Card(Rank.Ace, Suit.Clubs))).toOption.get
-    pair.beats(single) shouldBe false
+  it should "ne pas battre une combinaison de taille différente" in:
+    val simple = Play(List(Card(Rank.Roi, Suit.Piques))).toOption.get
+    val paire  = Play(List(Card(Rank.As, Suit.Coeurs), Card(Rank.As, Suit.Trefles))).toOption.get
+    paire.beats(simple) shouldBe false

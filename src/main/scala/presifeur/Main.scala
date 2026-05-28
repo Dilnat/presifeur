@@ -10,10 +10,10 @@ object Main extends ZIOAppDefault:
   override def run: Task[Unit] =
     for
       _     <- Console.printLine("=== Président ===")
-      _     <- Console.print("Player names (comma-separated, min 3): ")
+      _     <- Console.print("Noms des joueurs (séparés par des virgules, min 3) : ")
       input <- Console.readLine
       names  = input.split(",").map(_.trim).toList
-      _     <- ZIO.fail(new Exception("Need at least 3 players.")).when(names.size < 3)
+      _     <- (Console.printLine("Il faut au moins 3 joueurs.").orDie *> exit(ExitCode.failure)).when(names.size < 3)
       state  = GameEngine.newGame(names)
       _     <- gameLoop(state)
     yield ()
@@ -21,9 +21,9 @@ object Main extends ZIOAppDefault:
   private def gameLoop(state: GameState): Task[Unit] =
     if state.isGameOver then
       val ranked = GameEngine.assignRoles(state.finishOrder, state.players)
-      Console.printLine("\n=== Game Over ===") *>
+      Console.printLine("\n=== Fin de partie ===") *>
         ZIO.foreach(ranked)(p =>
-          Console.printLine(s"${p.role.fold("?")(_.toString)}: ${p.name}")
+          Console.printLine(s"${p.role.fold("?")(_.nom)} : ${p.name}")
         ).unit
     else if !state.currentPlayer.hasCards then
       gameLoop(state.copy(currentPlayerIdx = state.nextPlayerIdx))
@@ -34,7 +34,7 @@ object Main extends ZIOAppDefault:
                       case None        => ZIO.fromEither(GameEngine.applyPass(state))
                       case Some(cards) => ZIO.fromEither(GameEngine.applyPlay(state, cards))
                     }.catchAll { err =>
-                      Console.printLine(s"Invalid move: $err").orDie *> ZIO.succeed(state)
+                      Console.printLine(s"Coup invalide : $err").orDie *> ZIO.succeed(state)
                     }
         _        <- gameLoop(newState)
       yield ()
