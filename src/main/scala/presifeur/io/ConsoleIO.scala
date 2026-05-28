@@ -22,7 +22,7 @@ object ConsoleIO:
     ).orDie
 
   def readPlay(hand: List[Card]): Task[Option[List[Card]]] =
-    Console.print("Cartes à jouer (ex: '3♠ R♥') ou 'passer' : ").orDie *>
+    Console.print("Cartes à jouer (ex: '5♥ 5♠' ou '5C 5P') ou 'passer' : ").orDie *>
     Console.readLine.flatMap { input =>
       val trimmed = input.trim
       if trimmed.equalsIgnoreCase("passer") then ZIO.succeed(None)
@@ -34,13 +34,13 @@ object ConsoleIO:
         else ZIO.succeed(Some(parsed))
     }
 
-  // Codes de saisie : rang (3-9, 10, V, D, R, A, 2) + couleur (P=Piques, C=Coeurs, K=Carreaux, T=Trefles)
-  // Exemple : VP = Valet de Piques, DC = Dame de Coeurs, 10K = Dix de Carreaux
+  // Accepte rang + couleur, la couleur pouvant être un symbole (♠♥♦♣) ou une lettre (P/C/K/T)
+  // Exemples : 5♥  VP  DC  10♦  RT
   private def parseCard(s: String): Option[Card] =
     if s.length < 2 then None
     else
-      val suitChar = s.last.toUpper
-      val rankStr  = s.dropRight(1).toUpperCase
+      val suitStr = s.last.toString
+      val rankStr = s.dropRight(1).toUpperCase
       val rank = rankStr match
         case "3"  => Some(Rank.Trois)
         case "4"  => Some(Rank.Quatre)
@@ -56,10 +56,10 @@ object ConsoleIO:
         case "A"  => Some(Rank.As)
         case "2"  => Some(Rank.Deux)
         case _    => None
-      val suit = suitChar match
-        case 'P' => Some(Suit.Piques)
-        case 'C' => Some(Suit.Coeurs)
-        case 'K' => Some(Suit.Carreaux)
-        case 'T' => Some(Suit.Trefles)
-        case _   => None
+      val suit = suitStr match
+        case "♠" | "P" => Some(Suit.Piques)
+        case "♥" | "C" => Some(Suit.Coeurs)
+        case "♦" | "K" => Some(Suit.Carreaux)
+        case "♣" | "T" => Some(Suit.Trefles)
+        case _          => None
       for r <- rank; s <- suit yield Card(r, s)
