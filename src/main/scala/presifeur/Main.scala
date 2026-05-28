@@ -3,31 +3,38 @@ package presifeur
 import presifeur.engine.GameEngine
 import presifeur.io.ConsoleIO
 import presifeur.model.*
+import zio.*
 
-@main def run(): Unit =
-  println("=== Président ===")
-  print("Player names (comma-separated, min 3): ")
-  val names = scala.io.StdIn.readLine().split(",").map(_.trim).toList
-  if names.size < 3 then
-    println("Need at least 3 players.")
-    sys.exit(1)
+object Main extends ZIOAppDefault:
 
-  var state = GameEngine.newGame(names)
+  override def run: Task[Unit] =
+    for
+      _     <- Console.printLine("=== Président ===")
+      _     <- Console.print("Player names (comma-separated, min 3): ")
+      input <- Console.readLine
+      names  = input.split(",").map(_.trim).toList
+      _     <- ZIO.fail(new Exception("Need at least 3 players.")).when(names.size < 3)
+      state  = GameEngine.newGame(names)
+      _     <- gameLoop(state)
+    yield ()
 
-  while !state.isGameOver do
-    ConsoleIO.printState(state)
-    if !state.currentPlayer.hasCards then
-      state = state.copy(currentPlayerIdx = state.nextPlayerIdx)
+  private def gameLoop(state: GameState): Task[Unit] =
+    if state.isGameOver then
+      val ranked = GameEngine.assignRoles(state.finishOrder, state.players)
+      Console.printLine("\n=== Game Over ===") *>
+        ZIO.foreach(ranked)(p =>
+          Console.printLine(s"${p.role.fold("?")(_.toString)}: ${p.name}")
+        ).unit
+    else if !state.currentPlayer.hasCards then
+      gameLoop(state.copy(currentPlayerIdx = state.nextPlayerIdx))
     else
-      val result = ConsoleIO.readPlay(state.currentPlayer.hand) match
-        case None        => GameEngine.applyPass(state)
-        case Some(cards) => GameEngine.applyPlay(state, cards)
-      result match
-        case Left(err)       => println(s"Invalid move: $err")
-        case Right(newState) => state = newState
-
-  val ranked = GameEngine.assignRoles(state.finishOrder, state.players)
-  println("\n=== Game Over ===")
-  ranked.foreach { p =>
-    println(s"${p.role.fold("?")(_.toString)}: ${p.name}")
-  }
+      for
+        _        <- ConsoleIO.printState(state)
+        newState <- ConsoleIO.readPlay(state.currentPlayer.hand).flatMap {
+                      case None        => ZIO.fromEither(GameEngine.applyPass(state))
+                      case Some(cards) => ZIO.fromEither(GameEngine.applyPlay(state, cards))
+                    }.catchAll { err =>
+                      Console.printLine(s"Invalid move: $err").orDie *> ZIO.succeed(state)
+                    }
+        _        <- gameLoop(newState)
+      yield ()

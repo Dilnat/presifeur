@@ -1,31 +1,38 @@
 package presifeur.io
 
 import presifeur.model.*
+import zio.*
 
 object ConsoleIO:
 
-  def printState(state: GameState): Unit =
-    println(s"\n=== Round ${state.round} | Turn: ${state.currentPlayer.name} ===")
-    state.lastPlay match
-      case None       => println("Table is clear — open with any play.")
-      case Some(play) => println(s"Table: ${play.rank} x${play.size} (${play.cards.mkString(", ")})")
-    println(s"Your hand: ${state.currentPlayer.hand.mkString(", ")}")
-    state.players.foreach { p =>
-      val roleStr = p.role.fold("")(r => s" [${r}]")
-      println(s"  ${p.name}$roleStr: ${p.cardCount} cards")
-    }
+  def printState(state: GameState): UIO[Unit] =
+    val tableInfo = state.lastPlay match
+      case None       => "Table is clear — open with any play."
+      case Some(play) => s"Table: ${play.rank} x${play.size} (${play.cards.mkString(", ")})"
+    val playerList = state.players.map { p =>
+      val roleStr = p.role.fold("")(r => s" [$r]")
+      s"  ${p.name}$roleStr: ${p.cardCount} cards"
+    }.mkString("\n")
+    Console.printLine(
+      s"""
+         |=== Round ${state.round} | Turn: ${state.currentPlayer.name} ===
+         |$tableInfo
+         |Your hand: ${state.currentPlayer.hand.mkString(", ")}
+         |$playerList""".stripMargin
+    ).orDie
 
-  def readPlay(hand: List[Card]): Option[List[Card]] =
-    print("Cards to play (e.g. '3S 3H') or 'pass': ")
-    val input = scala.io.StdIn.readLine().trim
-    if input.equalsIgnoreCase("pass") then None
-    else
-      val tokens = input.split("\\s+").toList
-      val parsed = tokens.flatMap(parseCard)
-      if parsed.size != tokens.size then
-        println("Could not parse some cards. Try again.")
-        readPlay(hand)
-      else Some(parsed)
+  def readPlay(hand: List[Card]): Task[Option[List[Card]]] =
+    Console.print("Cards to play (e.g. '3S 3H') or 'pass': ").orDie *>
+    Console.readLine.flatMap { input =>
+      val trimmed = input.trim
+      if trimmed.equalsIgnoreCase("pass") then ZIO.succeed(None)
+      else
+        val tokens = trimmed.split("\\s+").toList
+        val parsed = tokens.flatMap(parseCard)
+        if parsed.size != tokens.size then
+          Console.printLine("Could not parse some cards. Try again.").orDie *> readPlay(hand)
+        else ZIO.succeed(Some(parsed))
+    }
 
   private def parseCard(s: String): Option[Card] =
     if s.length < 2 then None
