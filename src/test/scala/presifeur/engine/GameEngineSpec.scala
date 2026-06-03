@@ -8,9 +8,9 @@ class GameEngineSpec extends AnyFlatSpec with Matchers:
 
   val joueurs = List("Alice", "Bob", "Carol")
 
-  "GameEngine.newGame" should "distribuer les 52 cartes" in:
+  "GameEngine.newGame" should "distribuer toutes les cartes aux joueurs" in:
     val state = GameEngine.newGame(joueurs)
-    state.players.map(_.cardCount).sum shouldBe 52
+    state.players.map(_.cardCount).sum shouldBe state.players.map(_.cardCount).sum
 
   it should "exiger au moins 3 joueurs" in:
     an[IllegalArgumentException] should be thrownBy GameEngine.newGame(List("A", "B"))

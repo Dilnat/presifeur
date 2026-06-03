@@ -4,9 +4,12 @@ case class GameState(
   players: Vector[Player],
   currentPlayerIdx: Int,
   lastPlay: Option[Play],
-  passCount: Int,          // consecutive passes since last play
-  finishOrder: List[Int],  // player ids in finish order
-  round: Int
+  passCount: Int,
+  finishOrder: List[Int],
+  round: Int,
+  sameRankStreak: Int = 0,
+  autoTrouduc: List[Int] = Nil,
+  currentRankCount: Int = 0   // total de cartes du rang actuel jouées dans la manche
 ):
   def currentPlayer: Player = players(currentPlayerIdx)
   def activePlayers: Vector[Player] = players.filter(_.hasCards)
@@ -17,3 +20,5 @@ case class GameState(
     active.dropWhile(_ <= currentPlayerIdx).headOption
       .orElse(active.headOption)
       .getOrElse(currentPlayerIdx)
+  def forcedRank: Option[Rank] =
+    if sameRankStreak >= 2 then lastPlay.map(_.rank) else None
