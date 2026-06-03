@@ -11,7 +11,9 @@ lazy val root = (project in file("."))
     libraryDependencies ++= Seq(
       "dev.zio" %% "zio"            % "2.1.14",
       "org.scala-js" %%% "scalajs-dom" % "2.8.0",
-      "org.scalatest" %%% "scalatest" % "3.2.18" % Test
+      "dev.zio" %% "zio-http" % "3.0.1",
+      "dev.zio" %% "zio-json" % "0.7.3",
+      "org.scalatest" %% "scalatest" % "3.2.18" % Test
     ),
     scalacOptions ++= Seq(
       "-deprecation",
@@ -21,3 +23,6 @@ lazy val root = (project in file("."))
     ),
     scalaJSUseMainModuleInitializer := true
   )
+
+addCommandAlias("server", "runMain presifeur.ServerMain")
+addCommandAlias("cli",    "runMain presifeur.Main")
