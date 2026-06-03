@@ -1,12 +1,12 @@
 package presifeur.web
 
-import presifeur.engine.GameEngine
 import presifeur.model.*
 import presifeur.model.given
 
 import org.scalajs.dom
-import org.scalajs.dom.{CanvasRenderingContext2D, document, html}
+import org.scalajs.dom.{CanvasRenderingContext2D, MessageEvent, document, html}
 import scala.scalajs.js
+import scala.scalajs.js.JSConverters.*
 
 object BrowserApp:
 
@@ -16,21 +16,37 @@ object BrowserApp:
 
 private final class BrowserApp:
 
-  private var gameState: Option[GameState] = None
-  private var selectedCards: Set[Card] = Set.empty
-  private var cardButtons: Map[Card, html.Button] = Map.empty
+  private case class WaitingState(players: List[String], needed: Int)
+  private case class RemotePlayer(name: String, cardCount: Int, isCurrentPlayer: Boolean)
+  private case class RemoteState(
+    hand: List[String],
+    table: Option[String],
+    tableCards: List[String],
+    currentPlayer: String,
+    isYourTurn: Boolean,
+    players: List[RemotePlayer],
+    round: Int
+  )
+  private case class RankingEntry(role: String, name: String)
+
   private var threeScene: Option[ThreeScene] = None
+  private var socket: Option[dom.WebSocket] = None
+  private var waitingState: Option[WaitingState] = None
+  private var remoteState: Option[RemoteState] = None
+  private var remoteRankings: Option[List[RankingEntry]] = None
+  private var selectedRemoteCards: Set[String] = Set.empty
 
   private val root = div("app-root")
   private val header = div("hero")
-  private val title = h1("Président")
+  private val title = h1("Présifeur")
   private val subtitle = p("A Scala.js + three.js browser version of the card game.")
   private val status = div("status")
   private val overlay = div("overlay")
   private val overlayCard = div("overlay-card")
-  private val nameInput = inputText("Alice, Bob, Carol")
-  private val startButton = button("Start game")
   private val cancelButton = button("Cancel")
+  private val serverInput = inputText("ws://localhost:8080/game")
+  private val playerNameInput = inputText("Alice")
+  private val connectButton = button("Connect")
   private val errorBox = div("error")
   private val leftPanel = div("panel")
   private val rightPanel = div("panel")
@@ -39,7 +55,7 @@ private final class BrowserApp:
   private val handArea = div("hand-list")
   private val playButton = button("Play selected")
   private val passButton = button("Pass")
-  private val newGameButton = button("New game")
+  private val newGameButton = button("Disconnect")
   private val turnLabel = div("turn-label")
   private val tableLabel = div("table-label")
   private val selectedLabel = div("selected-label")
@@ -75,139 +91,267 @@ private final class BrowserApp:
 
   private def installOverlay(): Unit =
     overlay.appendChild(overlayCard)
-    overlayCard.appendChild(h2("Enter player names"))
-    overlayCard.appendChild(p("Separate names with commas, minimum 3 players."))
-    overlayCard.appendChild(nameInput)
+    overlayCard.appendChild(h2("Join the game"))
+    overlayCard.appendChild(p("Connect to a server lobby."))
+    overlayCard.appendChild(serverInput)
+    overlayCard.appendChild(playerNameInput)
+    overlayCard.appendChild(actionRow(connectButton, cancelButton))
     overlayCard.appendChild(errorBox)
-    overlayCard.appendChild(actionRow(startButton, cancelButton))
 
   private def wireActions(): Unit =
-    startButton.onclick = _ =>
-      parseNames(nameInput.value) match
-        case Left(message) =>
-          errorBox.textContent = message
-          errorBox.className = "error visible"
-        case Right(names) =>
-          errorBox.textContent = ""
-          errorBox.className = "error"
-          startGame(names)
+    connectButton.onclick = _ =>
+      val url = serverInput.value.trim
+      val name = playerNameInput.value.trim
+      if url.isEmpty then
+        showError("Enter a server URL.")
+      else if name.isEmpty then
+        showError("Enter a player name.")
+      else
+        clearError()
+        connectToServer(url, name)
 
     cancelButton.onclick = _ =>
       overlay.classList.remove("show")
-      if gameState.isEmpty then
-        status.textContent = "No game started. Reload the page to try again."
+      if remoteState.isEmpty && waitingState.isEmpty then
+        status.textContent = "No server connection."
 
     playButton.onclick = _ => playSelected()
     passButton.onclick = _ => passTurn()
     newGameButton.onclick = _ =>
+      disconnect()
       overlay.classList.add("show")
-      errorBox.textContent = ""
-      errorBox.className = "error"
-
-  private def startGame(names: List[String]): Unit =
-    gameState = Some(GameEngine.newGame(names))
-    selectedCards = Set.empty
-    overlay.classList.remove("show")
-    status.textContent = s"Game started with ${names.mkString(", ")}."
-    render()
+      clearError()
 
   private def playSelected(): Unit =
-    gameState match
-      case None => status.textContent = "Start a game first."
-      case Some(state) =>
-        val cards = state.currentPlayer.hand.filter(selectedCards.contains)
-        if cards.isEmpty then
-          status.textContent = "Select one or more cards first."
-        else
-          GameEngine.applyPlay(state, cards) match
-            case Left(error) => status.textContent = error
-            case Right(updated) =>
-              gameState = Some(updated)
-              selectedCards = Set.empty
-              render()
+    remoteState match
+      case None => status.textContent = "Connect to a server first."
+      case Some(state) if !state.isYourTurn => status.textContent = "Wait for your turn."
+      case Some(_) if selectedRemoteCards.isEmpty => status.textContent = "Select one or more cards first."
+      case Some(_) =>
+        sendPlay(selectedRemoteCards.toList)
+        selectedRemoteCards = Set.empty
+        render()
 
   private def passTurn(): Unit =
-    gameState match
-      case None => status.textContent = "Start a game first."
-      case Some(state) =>
-        GameEngine.applyPass(state) match
-          case Left(error) => status.textContent = error
-          case Right(updated) =>
-            gameState = Some(updated)
-            selectedCards = Set.empty
-            render()
+    remoteState match
+      case None => status.textContent = "Connect to a server first."
+      case Some(state) if !state.isYourTurn => status.textContent = "Wait for your turn."
+      case Some(_) =>
+        sendPass()
 
   private def render(): Unit =
-    cardButtons = Map.empty
-    gameState match
-      case None =>
-        turnLabel.textContent = "Waiting for players"
+    renderRemote()
+
+  private def renderRemote(): Unit =
+    newGameButton.textContent = "Disconnect"
+    def clearThree(): Unit =
+      if threeScene.nonEmpty then
+        tableArea.innerHTML = ""
+        threeScene = None
+    (waitingState, remoteState, remoteRankings) match
+      case (Some(waiting), _, _) =>
+        clearThree()
+        turnLabel.textContent = "Lobby"
+        tableLabel.textContent = "Table: waiting"
+        selectedLabel.textContent = "Selected: none"
+        playersArea.innerHTML = waiting.players.map(name => s"<div class='player'>$name</div>").mkString
+        handArea.innerHTML = s"<div class='muted'>Need ${waiting.needed} more player(s) to start.</div>"
+        tableArea.innerHTML = "<div class='table-text muted'>Waiting for players...</div>"
+        playButton.disabled = true
+        passButton.disabled = true
+      case (_, _, Some(rankings)) =>
+        clearThree()
+        turnLabel.textContent = "Game over"
+        tableLabel.textContent = "Table: cleared"
+        selectedLabel.textContent = "Selected: none"
+        playersArea.innerHTML = rankings.map(r => s"<div>${r.role}: ${r.name}</div>").mkString
+        handArea.innerHTML = "<div class='muted'>No more cards.</div>"
+        tableArea.innerHTML = ""
+        playButton.disabled = true
+        passButton.disabled = true
+      case (_, Some(state), _) =>
+        turnLabel.textContent = s"Turn: ${state.currentPlayer}"
+        tableLabel.textContent = state.table.fold("Table: empty")(t => s"Table: $t")
+        selectedLabel.textContent =
+          if selectedRemoteCards.isEmpty then "Selected: none"
+          else s"Selected: ${selectedRemoteCards.toList.sorted.mkString(", ")}" 
+        playersArea.innerHTML = state.players.map { p =>
+          val current = if p.isCurrentPlayer then " current" else ""
+          s"<div class='player$current'>${p.name} - ${p.cardCount} cards</div>"
+        }.mkString
+        renderRemoteHand(state)
+        renderRemoteThree(state)
+        playButton.disabled = selectedRemoteCards.isEmpty || !state.isYourTurn
+        passButton.disabled = !state.isYourTurn
+      case _ =>
+        clearThree()
+        turnLabel.textContent = "Waiting for server"
         tableLabel.textContent = "Table: empty"
         selectedLabel.textContent = "Selected: none"
         playersArea.innerHTML = ""
         handArea.innerHTML = ""
-        tableArea.innerHTML = ""
+        tableArea.innerHTML = "<div class='table-text muted'>Connect to a server to begin.</div>"
         playButton.disabled = true
         passButton.disabled = true
-      case Some(state) if state.isGameOver =>
-        renderGameOver(state)
-      case Some(state) =>
-        if !state.currentPlayer.hasCards then
-          gameState = Some(state.copy(currentPlayerIdx = state.nextPlayerIdx))
-          render()
-        else
-          turnLabel.textContent = s"Turn: ${state.currentPlayer.name}"
-          tableLabel.textContent = state.lastPlay match
-            case None => "Table: empty"
-            case Some(play) => s"Table: ${play.rank.courte} x${play.size}"
-          selectedLabel.textContent = if selectedCards.isEmpty then "Selected: none" else s"Selected: ${selectedCards.toList.sorted.map(_.toString).mkString(", ")}" 
-          renderPlayers(state)
-          renderHand(state)
-          renderThree(state)
-          playButton.disabled = selectedCards.isEmpty
-          passButton.disabled = false
 
-  private def renderGameOver(state: GameState): Unit =
-    val ranked = GameEngine.assignRoles(state.finishOrder, state.players)
-    turnLabel.textContent = "Game over"
-    tableLabel.textContent = "Table: cleared"
-    selectedLabel.textContent = "Selected: none"
-    playersArea.innerHTML = ranked.map(p => s"<div>${p.role.fold("?")(_.nom)}: ${p.name}</div>").mkString
-    handArea.innerHTML = "<div class='muted'>No more cards.</div>"
-    tableArea.innerHTML = ""
-    playButton.disabled = true
-    passButton.disabled = true
-    status.textContent = "Open New game to play again."
-    renderThree(state, gameOver = true)
-
-  private def renderPlayers(state: GameState): Unit =
-    playersArea.innerHTML = state.players.map { player =>
-      val active = if player.hasCards then "" else " done"
-      val role = player.role.fold("")(r => s" [${r.nom}]")
-      s"<div class='player$active${if state.currentPlayer.id == player.id then " current" else ""}'>${player.name}$role - ${player.cardCount} cards</div>"
-    }.mkString
-
-  private def renderHand(state: GameState): Unit =
+  private def renderRemoteHand(state: RemoteState): Unit =
     handArea.innerHTML = ""
-    cardButtons = state.currentPlayer.hand.map { card =>
-      val btn = button(card.toString, classes = List("card-button") ++ (if selectedCards.contains(card) then List("selected") else Nil))
+    state.hand.foreach { card =>
+      val classes = List("card-button") ++ (if selectedRemoteCards.contains(card) then List("selected") else Nil)
+      val btn = button(card, classes = classes)
+      btn.disabled = !state.isYourTurn
       btn.onclick = _ =>
-        if selectedCards.contains(card) then selectedCards -= card
-        else selectedCards += card
-        render()
+        if state.isYourTurn then
+          if selectedRemoteCards.contains(card) then selectedRemoteCards -= card
+          else selectedRemoteCards += card
+          render()
       handArea.appendChild(btn)
-      card -> btn
-    }.toMap
+    }
 
-  private def renderThree(state: GameState, gameOver: Boolean = false): Unit =
+  private def renderRemoteThree(state: RemoteState): Unit =
+    val selected = selectedRemoteCards.toList.flatMap(parseCardToken).sorted
+    val tableCards = state.tableCards.flatMap(parseCardToken)
     if threeScene.isEmpty then
       threeScene = Some(ThreeScene(tableArea))
-    threeScene.foreach(_.update(state, selectedCards.toList.sorted, gameOver))
+    threeScene.foreach(_.updateCards(tableCards, selected, gameOver = false))
 
-  private def parseNames(raw: String): Either[String, List[String]] =
-    val names = raw.split(",").map(_.trim).filter(_.nonEmpty).toList
-    if names.size < 3 then Left("Please enter at least 3 names.")
-    else Right(names)
+  private def connectToServer(url: String, name: String): Unit =
+    disconnect()
+    status.textContent = s"Connecting to ${url}..."
+    val ws = new dom.WebSocket(url)
+    socket = Some(ws)
+    ws.onopen = _ =>
+      status.textContent = "Connected. Joining lobby..."
+      sendJoin(name)
+      overlay.classList.remove("show")
+    ws.onmessage = (event: MessageEvent) =>
+      handleServerMessage(event.data.toString)
+    ws.onerror = _ =>
+      status.textContent = "Connection error."
+    ws.onclose = _ =>
+      if socket.contains(ws) then
+        socket = None
+        resetRemoteState()
+        status.textContent = "Connection closed."
+        render()
+
+  private def disconnect(): Unit =
+    socket.foreach(_.close())
+    socket = None
+    resetRemoteState()
+    status.textContent = "Disconnected from server."
+    render()
+
+  private def resetRemoteState(): Unit =
+    waitingState = None
+    remoteState = None
+    remoteRankings = None
+    selectedRemoteCards = Set.empty
+
+
+  private def handleServerMessage(raw: String): Unit =
+    val msg = js.JSON.parse(raw).asInstanceOf[js.Dynamic]
+    val tag = msg.tag.asInstanceOf[String]
+    tag match
+      case "waiting" =>
+        waitingState = Some(parseWaiting(msg))
+        remoteState = None
+        remoteRankings = None
+        selectedRemoteCards = Set.empty
+        status.textContent = "Waiting for more players..."
+        render()
+      case "state" =>
+        remoteState = Some(parseState(msg))
+        waitingState = None
+        remoteRankings = None
+        status.textContent = "Game in progress."
+        render()
+      case "gameOver" =>
+        remoteRankings = Some(parseRankings(msg))
+        waitingState = None
+        remoteState = None
+        selectedRemoteCards = Set.empty
+        status.textContent = "Game over."
+        render()
+      case "error" =>
+        val message = msg.message.asInstanceOf[String]
+        status.textContent = message
+      case _ =>
+        status.textContent = "Unknown server message."
+
+  private def parseWaiting(msg: js.Dynamic): WaitingState =
+    val players = msg.players.asInstanceOf[js.Array[String]].toList
+    val needed = msg.needed.asInstanceOf[Int]
+    WaitingState(players, needed)
+
+  private def parseState(msg: js.Dynamic): RemoteState =
+    val hand = msg.hand.asInstanceOf[js.Array[String]].toList
+    val table = if js.isUndefined(msg.table) || msg.table == null then None else Some(msg.table.asInstanceOf[String])
+    val tableCards =
+      if js.isUndefined(msg.tableCards) || msg.tableCards == null then Nil
+      else msg.tableCards.asInstanceOf[js.Array[String]].toList
+    val currentPlayer = msg.currentPlayer.asInstanceOf[String]
+    val isYourTurn = msg.isYourTurn.asInstanceOf[Boolean]
+    val players = msg.players.asInstanceOf[js.Array[js.Dynamic]].toList.map { p =>
+      RemotePlayer(
+        name = p.name.asInstanceOf[String],
+        cardCount = p.cardCount.asInstanceOf[Int],
+        isCurrentPlayer = p.isCurrentPlayer.asInstanceOf[Boolean]
+      )
+    }
+    val round = msg.round.asInstanceOf[Int]
+    RemoteState(hand, table, tableCards, currentPlayer, isYourTurn, players, round)
+
+  private def parseRankings(msg: js.Dynamic): List[RankingEntry] =
+    msg.rankings.asInstanceOf[js.Array[js.Dynamic]].toList.map { r =>
+      RankingEntry(r.role.asInstanceOf[String], r.name.asInstanceOf[String])
+    }
+
+  private def sendJoin(name: String): Unit =
+    sendJson(js.Dynamic.literal(tag = "join", name = name))
+
+  private def sendPlay(cards: List[String]): Unit =
+    sendJson(js.Dynamic.literal(tag = "play", cards = js.Array(cards*)))
+
+  private def sendPass(): Unit =
+    sendJson(js.Dynamic.literal(tag = "pass"))
+
+  private def sendJson(value: js.Any): Unit =
+    socket.foreach(_.send(js.JSON.stringify(value)))
+
+  private def showError(message: String): Unit =
+    errorBox.textContent = message
+    errorBox.className = "error visible"
+
+  private def clearError(): Unit =
+    errorBox.textContent = ""
+    errorBox.className = "error"
+
+  private def parseCardToken(token: String): Option[Card] =
+    if token.length < 2 then None
+    else
+      val suit = token.last.toString match
+        case "♠" | "P" => Some(Suit.Piques)
+        case "♥" | "C" => Some(Suit.Coeurs)
+        case "♦" | "K" => Some(Suit.Carreaux)
+        case "♣" | "T" => Some(Suit.Trefles)
+        case _          => None
+      val rank = token.dropRight(1).toUpperCase match
+        case "3"  => Some(Rank.Trois)
+        case "4"  => Some(Rank.Quatre)
+        case "5"  => Some(Rank.Cinq)
+        case "6"  => Some(Rank.Six)
+        case "7"  => Some(Rank.Sept)
+        case "8"  => Some(Rank.Huit)
+        case "9"  => Some(Rank.Neuf)
+        case "10" => Some(Rank.Dix)
+        case "V"  => Some(Rank.Valet)
+        case "D"  => Some(Rank.Dame)
+        case "R"  => Some(Rank.Roi)
+        case "A"  => Some(Rank.As)
+        case "2"  => Some(Rank.Deux)
+        case _    => None
+      for r <- rank; su <- suit yield Card(r, su)
 
   private def setupStyles(): Unit =
     val style = document.createElement("style")
@@ -236,9 +380,11 @@ private final class BrowserApp:
       .overlay.show { display: flex; }
       .overlay-card { width: min(560px, 100%); border-radius: 28px; padding: 24px; display: flex; flex-direction: column; gap: 12px; }
       .overlay-card input { border-radius: 16px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.08); color: #f4f3ee; padding: 14px 16px; font-size: 1rem; }
+      .overlay-divider { height: 1px; width: 100%; background: rgba(255,255,255,0.12); margin: 8px 0; }
       .error { min-height: 1.25rem; color: #ff9d9d; }
       .error.visible { font-weight: 700; }
       .muted { color: #aeb8af; }
+      .table-text { padding: 24px; font-size: 1.2rem; }
       .three-root { width: 100%; height: 100%; }
     """
     document.head.appendChild(style)
@@ -318,8 +464,11 @@ private final class ThreeScene(container: html.Div):
     renderer.setSize(width, height)
 
   def update(state: GameState, selected: List[Card], gameOver: Boolean): Unit =
-    clearCards()
     val tableCards = state.lastPlay.map(_.cards).getOrElse(Nil)
+    updateCards(tableCards, selected, gameOver)
+
+  def updateCards(tableCards: List[Card], selected: List[Card], gameOver: Boolean): Unit =
+    clearCards()
     val tableStack = tableCards.zipWithIndex.map((card, index) => createCardMesh(card, index * 0.18, 0.5, index * 0.04, 0)).toList
     val selectedFan = selected.zipWithIndex.map((card, index) => createCardMesh(card, -selected.size * 0.22 + index * 0.44, 0.25, 4.2, -0.06 + index * 0.01)).toList
     cardMeshes = tableStack ++ selectedFan
