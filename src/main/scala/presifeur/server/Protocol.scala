@@ -8,16 +8,19 @@ import zio.json.*
 @jsonDiscriminator("tag")
 sealed trait ClientMessage
 object ClientMessage:
-  @jsonHint("join")  case class Join(name: String)        extends ClientMessage
-  @jsonHint("start") case class Start()                   extends ClientMessage
-  @jsonHint("play")  case class Play(cards: List[String]) extends ClientMessage
-  @jsonHint("pass")  case class Pass()                    extends ClientMessage
+  @jsonHint("join") case class Join(name: String) extends ClientMessage
+  @jsonHint("start") case class Start() extends ClientMessage
+  @jsonHint("play") case class Play(cards: List[String]) extends ClientMessage
+  @jsonHint("pass") case class Pass() extends ClientMessage
+  @jsonHint("exchange") case class Exchange(cards: List[String])
+      extends ClientMessage
 
   given JsonDecoder[ClientMessage] = DeriveJsonDecoder.gen[ClientMessage]
 
 // ── Serveur → Client ─────────────────────────────────────────────────────────
 
-case class PlayerInfo(name: String, cardCount: Int, isCurrentPlayer: Boolean) derives JsonEncoder
+case class PlayerInfo(name: String, cardCount: Int, isCurrentPlayer: Boolean)
+    derives JsonEncoder
 case class RankingEntry(role: String, name: String) derives JsonEncoder
 
 @jsonDiscriminator("tag")
@@ -25,30 +28,40 @@ sealed trait ServerMessage
 object ServerMessage:
   @jsonHint("waiting")
   case class Waiting(
-    master: String,
-    players: List[String],
-    needed: Int,
-    isMaster: Boolean,
-    canStart: Boolean,
-    isPlaying: Boolean
+      master: String,
+      players: List[String],
+      needed: Int,
+      isMaster: Boolean,
+      canStart: Boolean,
+      isPlaying: Boolean
   ) extends ServerMessage
 
   @jsonHint("state")
   case class State(
-    hand: List[String],
-    table: Option[String],
-    tableCards: List[String],
-    currentPlayer: String,
-    isYourTurn: Boolean,
-    players: List[PlayerInfo],
-    round: Int
+      hand: List[String],
+      table: Option[String],
+      tableCards: List[String],
+      currentPlayer: String,
+      isYourTurn: Boolean,
+      players: List[PlayerInfo],
+      round: Int
   ) extends ServerMessage
 
   @jsonHint("error")
   case class Error(message: String) extends ServerMessage
 
   @jsonHint("gameOver")
-  case class GameOver(rankings: List[RankingEntry]) extends ServerMessage
+  case class GameOver(rankings: List[RankingEntry], isMaster: Boolean)
+      extends ServerMessage
+
+  @jsonHint("exchange")
+  case class Exchange(
+      role: String,
+      target: String,
+      count: Int,
+      isYourTurn: Boolean,
+      hand: List[String]
+  ) extends ServerMessage
 
   given JsonEncoder[ServerMessage] = DeriveJsonEncoder.gen[ServerMessage]
 
@@ -63,7 +76,7 @@ object CardParser:
         case "♥" | "C" => Some(Suit.Coeurs)
         case "♦" | "K" => Some(Suit.Carreaux)
         case "♣" | "T" => Some(Suit.Trefles)
-        case _          => None
+        case _         => None
       val rank = s.dropRight(1).toUpperCase match
         case "3"  => Some(Rank.Trois)
         case "4"  => Some(Rank.Quatre)

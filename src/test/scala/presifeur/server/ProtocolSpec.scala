@@ -102,7 +102,8 @@ class ProtocolSpec extends AnyFlatSpec with Matchers:
 
   "ServerMessage.GameOver" should "contenir le tag 'gameOver' et les classements" in:
     val json = (ServerMessage.GameOver(
-      List(RankingEntry("Président", "Alice"), RankingEntry("Trouduc", "Bob"))
+      List(RankingEntry("Président", "Alice"), RankingEntry("Trouduc", "Bob")),
+      isMaster = false
     ): ServerMessage).toJson
     json should include(""""tag":"gameOver"""")
     json should include("Président")

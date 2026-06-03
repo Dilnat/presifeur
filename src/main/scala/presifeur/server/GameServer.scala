@@ -74,3 +74,8 @@ object GameServer:
           case None     => out.offer(ServerMessage.Error("Rejoignez d'abord la partie.")).unit
           case Some(id) => room.pass(id)
         }
+      case ClientMessage.Exchange(cards) =>
+        pidRef.get.flatMap {
+          case None     => out.offer(ServerMessage.Error("Rejoignez d'abord la partie.")).unit
+          case Some(id) => room.exchange(id, cards)
+        }
