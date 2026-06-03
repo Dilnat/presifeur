@@ -26,7 +26,9 @@ class GameRoomSpec extends AnyFlatSpec with Matchers:
     val queues = Vector.fill(n)(mkQueue())
     queues.zipWithIndex.foreach { (q, i) =>
       run(room.join(s"Joueur$i", q).either)
+      drain(q)
     }
+    run(room.start(0).either)
     // Récupérer l'état initial de chaque joueur (dernier message reçu)
     val states = queues.map { q =>
       drain(q).collect { case s: ServerMessage.State => s }.last
@@ -49,6 +51,27 @@ class GameRoomSpec extends AnyFlatSpec with Matchers:
     val msgs = drain(q0)
     msgs should have size 1
     msgs.head shouldBe a[ServerMessage.Waiting]
+    val waiting = msgs.head.asInstanceOf[ServerMessage.Waiting]
+    waiting.isMaster shouldBe true
+    waiting.canStart shouldBe false
+
+  it should "permettre au master de lancer la partie manuellement" in:
+    val room = mkRoom()
+    val q0 = mkQueue(); val q1 = mkQueue(); val q2 = mkQueue()
+    run(room.join("Alice", q0).either); drain(q0)
+    run(room.join("Bob", q1).either); drain(q0); drain(q1)
+    run(room.join("Cara", q2).either); drain(q0); drain(q1); drain(q2)
+    run(room.start(0).either)
+    val states = Vector(q0, q1, q2).map(q => drain(q).collect { case s: ServerMessage.State => s }.last)
+    states should have size 3
+
+  it should "refuser le lancement par un non-master" in:
+    val room = mkRoom()
+    val q0 = mkQueue(); val q1 = mkQueue(); val q2 = mkQueue()
+    run(room.join("Alice", q0).either); drain(q0)
+    run(room.join("Bob", q1).either); drain(q0); drain(q1)
+    run(room.join("Cara", q2).either); drain(q0); drain(q1); drain(q2)
+    run(room.start(1).either).isLeft shouldBe true
 
   it should "mettre à jour le compteur 'needed' à chaque connexion" in:
     val room = mkRoom()
@@ -67,14 +90,20 @@ class GameRoomSpec extends AnyFlatSpec with Matchers:
     // Exactement un joueur a isYourTurn = true
     states.count(_.isYourTurn) shouldBe 1
 
-  it should "refuser une connexion supplémentaire une fois la partie lancée" in:
+  it should "accepter une connexion supplémentaire pendant une partie" in:
     val (room, _, _) = startGame(3)
-    val result = run(room.join("Intrus", mkQueue()).either)
-    result.isLeft shouldBe true
+    val lateQueue = mkQueue()
+    val result = run(room.join("Intrus", lateQueue).either)
+    result.isRight shouldBe true
+    drain(lateQueue).head shouldBe a[ServerMessage.Waiting]
 
   it should "distribuer 52 cartes au total entre les joueurs" in:
     val (_, _, states) = startGame(3)
     states.map(_.hand.size).sum shouldBe 52
+
+  it should "accepter plus de 3 joueurs au démarrage" in:
+    val (_, _, states) = startGame(4)
+    states should have size 4
 
   // ── Tour de jeu ───────────────────────────────────────────────────────────
 
@@ -152,3 +181,11 @@ class GameRoomSpec extends AnyFlatSpec with Matchers:
     )
     // La table doit être None (vidée)
     statesAfter.flatten.foreach(_.table shouldBe None)
+
+  it should "placer un joueur rejoint en cours de partie pour le prochain démarrage" in:
+    val (room, _, _) = startGame(3)
+    val lateQueue = mkQueue()
+    run(room.join("Late", lateQueue).either)
+    val waiting = drain(lateQueue).head.asInstanceOf[ServerMessage.Waiting]
+    waiting.isPlaying shouldBe true
+    waiting.canStart shouldBe false

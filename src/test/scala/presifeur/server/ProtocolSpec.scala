@@ -46,6 +46,9 @@ class ProtocolSpec extends AnyFlatSpec with Matchers:
     """{"tag":"play","cards":["5♥","5♠"]}""".fromJson[ClientMessage] shouldBe
       Right(ClientMessage.Play(List("5♥", "5♠")))
 
+  it should "décoder un message start" in:
+    """{"tag":"start"}""".fromJson[ClientMessage] shouldBe Right(ClientMessage.Start())
+
   it should "décoder un message play avec une seule carte" in:
     """{"tag":"play","cards":["R♣"]}""".fromJson[ClientMessage] shouldBe
       Right(ClientMessage.Play(List("R♣")))
@@ -62,16 +65,19 @@ class ProtocolSpec extends AnyFlatSpec with Matchers:
   // ── ServerMessage (encodage JSON) ─────────────────────────────────────────
 
   "ServerMessage.Waiting" should "contenir le tag 'waiting' et le champ needed" in:
-    val json = (ServerMessage.Waiting(List("Alice"), 2): ServerMessage).toJson
+    val json = (ServerMessage.Waiting("Alice", List("Alice"), 2, isMaster = true, canStart = false, isPlaying = false): ServerMessage).toJson
     json should include(""""tag":"waiting"""")
     json should include(""""needed":2""")
+    json should include(""""master":"Alice""")
+    json should include(""""isMaster":true""")
+    json should include(""""canStart":false""")
     json should include("Alice")
 
   "ServerMessage.State" should "contenir le tag 'state' et isYourTurn" in:
     val msg: ServerMessage = ServerMessage.State(
       hand          = List("3♠", "5♥"),
       table         = Some("5 x2"),
-        tableCards    = List("5♥", "5♠"),
+      tableCards    = List("5♥", "5♠"),
       currentPlayer = "Alice",
       isYourTurn    = true,
       players       = List(PlayerInfo("Alice", 17, true), PlayerInfo("Bob", 18, false)),
@@ -82,8 +88,7 @@ class ProtocolSpec extends AnyFlatSpec with Matchers:
     json should include(""""isYourTurn":true""")
     json should include(""""currentPlayer":"Alice"""")
     json should include(""""table":"5 x2"""")
-
-      json should include(""""tableCards":["5♥","5♠"]""")
+    json should include(""""tableCards":["5♥","5♠"]""")
   it should "omettre le champ table quand la table est vide" in:
     val msg: ServerMessage = ServerMessage.State(
       List("3♠"), None, Nil, "Alice", true, Nil, 1

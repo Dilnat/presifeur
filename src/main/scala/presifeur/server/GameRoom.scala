@@ -4,79 +4,128 @@ import presifeur.engine.GameEngine
 import presifeur.model.*
 import zio.*
 
-private case class LobbyEntry(name: String, queue: Queue[ServerMessage])
+private case class LobbyEntry(id: Int, name: String, queue: Queue[ServerMessage])
 
-private enum RoomState:
-  case Lobby(entries: Vector[LobbyEntry])
-  case Playing(game: GameState, queues: Map[Int, Queue[ServerMessage]])
-  case Done
+private case class ActiveGame(
+  game: GameState,
+  queues: Map[Int, Queue[ServerMessage]],
+  gameIdxByRoomId: Map[Int, Int]
+)
+
+private case class RoomState(
+  lobby: Vector[LobbyEntry],
+  masterId: Option[Int],
+  active: Option[ActiveGame],
+  nextId: Int
+)
 
 class GameRoom private (stateRef: Ref[RoomState], val minPlayers: Int):
 
-  // Rejoint le lobby ; retourne le playerId assigné, ou échec si la partie est déjà lancée.
   def join(name: String, queue: Queue[ServerMessage]): IO[String, Int] =
-    stateRef.modify {
-      case RoomState.Lobby(entries) =>
-        val id      = entries.size
-        val updated = entries :+ LobbyEntry(name, queue)
-        if updated.size >= minPlayers then
-          val names  = updated.map(_.name).toList
-          val game   = GameEngine.newGame(names)
-          val queues = updated.zipWithIndex.map((e, i) => i -> e.queue).toMap
-          (Right((id, Some((game, queues)))), RoomState.Playing(game, queues))
-        else
-          (Right((id, None)), RoomState.Lobby(updated))
-      case other =>
-        (Left("La partie a déjà commencé."), other)
+    stateRef.modify { state =>
+      val entry        = LobbyEntry(state.nextId, name, queue)
+      val updatedLobby = state.lobby :+ entry
+      val updatedState = state.copy(
+        lobby = updatedLobby,
+        masterId = state.masterId.orElse(Some(entry.id)),
+        nextId = state.nextId + 1
+      )
+      val masterName = updatedState.masterId.flatMap(id => updatedLobby.find(_.id == id).map(_.name)).getOrElse(name)
+      val effect = state.active match
+        case Some(_) =>
+          queue.offer(waitingMessage(updatedLobby, masterName, updatedState.masterId, entry.id, isPlaying = true)).unit
+        case None =>
+          broadcastWaiting(updatedLobby, masterName, updatedState.masterId, isPlaying = false)
+      val result: Either[String, (Int, UIO[Unit])] = Right((entry.id, effect))
+      (result, updatedState)
     }.flatMap {
-      case Left(err)                       => ZIO.fail(err)
-      case Right((id, Some((game, qs))))   => broadcastState(game, qs).as(id)
-      case Right((id, None))               =>
-        stateRef.get.flatMap {
-          case RoomState.Lobby(entries) => broadcastWaiting(entries)
-          case _                         => ZIO.unit
-        }.as(id)
+      case Left(err)          => ZIO.fail(err)
+      case Right((id, effect)) => effect.as(id)
+    }
+
+  def start(playerId: Int): IO[String, Unit] =
+    stateRef.modify { state =>
+      if state.active.nonEmpty then
+        (Left("La partie est déjà en cours."), state)
+      else if state.masterId.forall(_ != playerId) then
+        (Left("Seul le master peut lancer la partie."), state)
+      else if state.lobby.size < minPlayers then
+        (Left(s"Il faut au moins $minPlayers joueurs."), state)
+      else
+        val participants = state.lobby
+        val game         = GameEngine.newGame(participants.map(_.name).toList)
+        val queues       = participants.zipWithIndex.map((entry, index) => index -> entry.queue).toMap
+        val roomMap      = participants.zipWithIndex.map((entry, index) => entry.id -> index).toMap
+        val active       = ActiveGame(game, queues, roomMap)
+        val updated      = state.copy(active = Some(active))
+        val result: Either[String, UIO[Unit]] = Right(broadcastState(game, queues))
+        (result, updated)
+    }.flatMap {
+      case Left(err)     => ZIO.fail(err)
+      case Right(effect) => effect
     }
 
   def play(playerId: Int, cardTokens: List[String]): UIO[Unit] =
     stateRef.modify {
-      case s @ RoomState.Playing(game, queues) =>
-        if game.currentPlayerIdx != playerId then
-          (sendTo(queues, playerId, ServerMessage.Error("Ce n'est pas votre tour.")), s)
-        else
-          val parsed = cardTokens.flatMap(CardParser.parse)
-          if parsed.size != cardTokens.size then
-            (sendTo(queues, playerId, ServerMessage.Error("Cartes non reconnues.")), s)
-          else GameEngine.applyPlay(game, parsed) match
-            case Left(err)      =>
-              (sendTo(queues, playerId, ServerMessage.Error(s"Coup invalide : $err")), s)
-            case Right(newGame) =>
-              val advanced = skipEmptyHands(newGame)
-              if advanced.isGameOver then
-                (endGame(advanced, queues), RoomState.Done)
-              else
-                (broadcastState(advanced, queues), RoomState.Playing(advanced, queues))
-      case s => (ZIO.unit, s)
+      case state @ RoomState(_, _, Some(active), _) =>
+        val game   = active.game
+        val queues = active.queues
+        active.gameIdxByRoomId.get(playerId) match
+          case None =>
+            (sendTo(queues, playerId, ServerMessage.Error("Rejoignez d'abord la partie en cours.")), state)
+          case Some(gamePlayerId) if game.currentPlayerIdx != gamePlayerId =>
+            (sendTo(queues, playerId, ServerMessage.Error("Ce n'est pas votre tour.")), state)
+          case Some(_) =>
+            val parsed = cardTokens.flatMap(CardParser.parse)
+            if parsed.size != cardTokens.size then
+              (sendTo(queues, playerId, ServerMessage.Error("Cartes non reconnues.")), state)
+            else GameEngine.applyPlay(game, parsed) match
+              case Left(err)      =>
+                (sendTo(queues, playerId, ServerMessage.Error(s"Coup invalide : $err")), state)
+              case Right(newGame) =>
+                val advanced = skipEmptyHands(newGame)
+                if advanced.isGameOver then
+                  val masterName = state.masterId.flatMap(id => state.lobby.find(_.id == id).map(_.name)).getOrElse("?")
+                  val updated    = state.copy(active = None)
+                  (
+                    endGame(advanced, queues) *> broadcastWaiting(state.lobby, masterName, state.masterId, isPlaying = false),
+                    updated
+                  )
+                else
+                  val updatedActive = active.copy(game = advanced)
+                  (broadcastState(advanced, queues), state.copy(active = Some(updatedActive)))
+      case state => (ZIO.unit, state)
     }.flatten
 
   def pass(playerId: Int): UIO[Unit] =
     stateRef.modify {
-      case s @ RoomState.Playing(game, queues) =>
-        if game.currentPlayerIdx != playerId then
-          (sendTo(queues, playerId, ServerMessage.Error("Ce n'est pas votre tour.")), s)
-        else GameEngine.applyPass(game) match
-          case Left(err)      =>
-            (sendTo(queues, playerId, ServerMessage.Error(err)), s)
-          case Right(newGame) =>
-            val advanced = skipEmptyHands(newGame)
-            if advanced.isGameOver then
-              (endGame(advanced, queues), RoomState.Done)
-            else
-              (broadcastState(advanced, queues), RoomState.Playing(advanced, queues))
-      case s => (ZIO.unit, s)
+      case state @ RoomState(_, _, Some(active), _) =>
+        val game   = active.game
+        val queues = active.queues
+        active.gameIdxByRoomId.get(playerId) match
+          case None =>
+            (sendTo(queues, playerId, ServerMessage.Error("Rejoignez d'abord la partie en cours.")), state)
+          case Some(gamePlayerId) if game.currentPlayerIdx != gamePlayerId =>
+            (sendTo(queues, playerId, ServerMessage.Error("Ce n'est pas votre tour.")), state)
+          case Some(_) =>
+            GameEngine.applyPass(game) match
+              case Left(err)      =>
+                (sendTo(queues, playerId, ServerMessage.Error(err)), state)
+              case Right(newGame) =>
+                val advanced = skipEmptyHands(newGame)
+                if advanced.isGameOver then
+                  val masterName = state.masterId.flatMap(id => state.lobby.find(_.id == id).map(_.name)).getOrElse("?")
+                  val updated    = state.copy(active = None)
+                  (
+                    endGame(advanced, queues) *> broadcastWaiting(state.lobby, masterName, state.masterId, isPlaying = false),
+                    updated
+                  )
+                else
+                  val updatedActive = active.copy(game = advanced)
+                  (broadcastState(advanced, queues), state.copy(active = Some(updatedActive)))
+      case state => (ZIO.unit, state)
     }.flatten
 
-  // Avance currentPlayerIdx en sautant les joueurs qui n'ont plus de cartes.
   @annotation.tailrec
   private def skipEmptyHands(game: GameState, limit: Int = 0): GameState =
     if limit >= game.players.size || game.isGameOver || game.currentPlayer.hasCards then game
@@ -104,14 +153,32 @@ class GameRoom private (stateRef: Ref[RoomState], val minPlayers: Int):
       queue.offer(msg).unit
     }
 
-  private def broadcastWaiting(entries: Vector[LobbyEntry]): UIO[Unit] =
-    val msg = ServerMessage.Waiting(entries.map(_.name).toList, minPlayers - entries.size)
-    ZIO.foreachDiscard(entries)(_.queue.offer(msg).unit)
+  private def broadcastWaiting(
+    entries: Vector[LobbyEntry],
+    masterName: String,
+    masterId: Option[Int],
+    isPlaying: Boolean
+  ): UIO[Unit] =
+    ZIO.foreachDiscard(entries) { entry =>
+      entry.queue.offer(waitingMessage(entries, masterName, masterId, entry.id, isPlaying)).unit
+    }
+
+  private def waitingMessage(
+    entries: Vector[LobbyEntry],
+    masterName: String,
+    masterId: Option[Int],
+    recipientId: Int,
+    isPlaying: Boolean
+  ): ServerMessage.Waiting =
+    val needed  = math.max(minPlayers - entries.size, 0)
+    val isMaster = masterId.contains(recipientId)
+    val canStart = !isPlaying && isMaster && entries.size >= minPlayers
+    ServerMessage.Waiting(masterName, entries.map(_.name).toList, needed, isMaster, canStart, isPlaying)
 
   private def sendTo(queues: Map[Int, Queue[ServerMessage]], id: Int, msg: ServerMessage): UIO[Unit] =
     queues.get(id).fold(ZIO.unit)(_.offer(msg).unit)
 
 object GameRoom:
   def make(minPlayers: Int): UIO[GameRoom] =
-    Ref.make[RoomState](RoomState.Lobby(Vector.empty))
+    Ref.make[RoomState](RoomState(Vector.empty, None, None, 0))
       .map(new GameRoom(_, minPlayers))
