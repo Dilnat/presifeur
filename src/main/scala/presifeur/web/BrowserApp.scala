@@ -16,7 +16,7 @@ object BrowserApp:
 
 private final class BrowserApp:
 
-  private case class WaitingState(players: List[String], needed: Int)
+  private case class WaitingState(master: String, players: List[String], needed: Int, isMaster: Boolean, canStart: Boolean, isPlaying: Boolean)
   private case class RemotePlayer(name: String, cardCount: Int, isCurrentPlayer: Boolean)
   private case class RemoteState(
     hand: List[String],
@@ -44,7 +44,7 @@ private final class BrowserApp:
   private val overlay = div("overlay")
   private val overlayCard = div("overlay-card")
   private val cancelButton = button("Cancel")
-  private val serverInput = inputText("ws://localhost:8080/game")
+  private val serverUrl = "ws://localhost:8080/game"
   private val playerNameInput = inputText("Alice")
   private val connectButton = button("Connect")
   private val errorBox = div("error")
@@ -55,6 +55,7 @@ private final class BrowserApp:
   private val handArea = div("hand-list")
   private val playButton = button("Play selected")
   private val passButton = button("Pass")
+  private val startButton = button("Start game")
   private val newGameButton = button("Disconnect")
   private val turnLabel = div("turn-label")
   private val tableLabel = div("table-label")
@@ -81,7 +82,7 @@ private final class BrowserApp:
     leftPanel.appendChild(selectedLabel)
     leftPanel.appendChild(playersArea)
     leftPanel.appendChild(handArea)
-    leftPanel.appendChild(actionRow(playButton, passButton, newGameButton))
+    leftPanel.appendChild(actionRow(playButton, passButton, startButton, newGameButton))
 
     rightPanel.appendChild(tableArea)
 
@@ -92,23 +93,19 @@ private final class BrowserApp:
   private def installOverlay(): Unit =
     overlay.appendChild(overlayCard)
     overlayCard.appendChild(h2("Join the game"))
-    overlayCard.appendChild(p("Connect to a server lobby."))
-    overlayCard.appendChild(serverInput)
+    overlayCard.appendChild(p("Connect to the shared server lobby. The first player becomes the master and starts the game."))
     overlayCard.appendChild(playerNameInput)
     overlayCard.appendChild(actionRow(connectButton, cancelButton))
     overlayCard.appendChild(errorBox)
 
   private def wireActions(): Unit =
     connectButton.onclick = _ =>
-      val url = serverInput.value.trim
       val name = playerNameInput.value.trim
-      if url.isEmpty then
-        showError("Enter a server URL.")
-      else if name.isEmpty then
+      if name.isEmpty then
         showError("Enter a player name.")
       else
         clearError()
-        connectToServer(url, name)
+        connectToServer(name)
 
     cancelButton.onclick = _ =>
       overlay.classList.remove("show")
@@ -117,6 +114,7 @@ private final class BrowserApp:
 
     playButton.onclick = _ => playSelected()
     passButton.onclick = _ => passTurn()
+    startButton.onclick = _ => startGame()
     newGameButton.onclick = _ =>
       disconnect()
       overlay.classList.add("show")
@@ -139,6 +137,15 @@ private final class BrowserApp:
       case Some(_) =>
         sendPass()
 
+  private def startGame(): Unit =
+    waitingState match
+      case Some(waiting) if waiting.isMaster && !waiting.isPlaying =>
+        sendStart()
+      case Some(_) =>
+        status.textContent = "Only the master can start the game."
+      case None =>
+        status.textContent = "Connect to a server first."
+
   private def render(): Unit =
     renderRemote()
 
@@ -151,14 +158,23 @@ private final class BrowserApp:
     (waitingState, remoteState, remoteRankings) match
       case (Some(waiting), _, _) =>
         clearThree()
-        turnLabel.textContent = "Lobby"
+        turnLabel.textContent = if waiting.isPlaying then s"Waiting for ${waiting.master}" else s"Lobby - ${waiting.master} is master"
         tableLabel.textContent = "Table: waiting"
         selectedLabel.textContent = "Selected: none"
         playersArea.innerHTML = waiting.players.map(name => s"<div class='player'>$name</div>").mkString
-        handArea.innerHTML = s"<div class='muted'>Need ${waiting.needed} more player(s) to start.</div>"
+        handArea.innerHTML =
+          if waiting.isPlaying then
+            s"<div class='muted'>Game in progress. You will join the next one.</div>"
+          else
+            val readiness = if waiting.needed > 0 then s"Need ${waiting.needed} more player(s)." else "Ready to start."
+            if waiting.isMaster then
+              s"<div class='muted'>$readiness You control the start.</div>"
+            else
+              s"<div class='muted'>$readiness Waiting for ${waiting.master} to start.</div>"
         tableArea.innerHTML = "<div class='table-text muted'>Waiting for players...</div>"
         playButton.disabled = true
         passButton.disabled = true
+        startButton.disabled = !waiting.isMaster || waiting.isPlaying
       case (_, _, Some(rankings)) =>
         clearThree()
         turnLabel.textContent = "Game over"
@@ -169,6 +185,7 @@ private final class BrowserApp:
         tableArea.innerHTML = ""
         playButton.disabled = true
         passButton.disabled = true
+        startButton.disabled = true
       case (_, Some(state), _) =>
         turnLabel.textContent = s"Turn: ${state.currentPlayer}"
         tableLabel.textContent = state.table.fold("Table: empty")(t => s"Table: $t")
@@ -183,6 +200,7 @@ private final class BrowserApp:
         renderRemoteThree(state)
         playButton.disabled = selectedRemoteCards.isEmpty || !state.isYourTurn
         passButton.disabled = !state.isYourTurn
+        startButton.disabled = true
       case _ =>
         clearThree()
         turnLabel.textContent = "Waiting for server"
@@ -193,6 +211,7 @@ private final class BrowserApp:
         tableArea.innerHTML = "<div class='table-text muted'>Connect to a server to begin.</div>"
         playButton.disabled = true
         passButton.disabled = true
+        startButton.disabled = true
 
   private def renderRemoteHand(state: RemoteState): Unit =
     handArea.innerHTML = ""
@@ -215,10 +234,10 @@ private final class BrowserApp:
       threeScene = Some(ThreeScene(tableArea))
     threeScene.foreach(_.updateCards(tableCards, selected, gameOver = false))
 
-  private def connectToServer(url: String, name: String): Unit =
+  private def connectToServer(name: String): Unit =
     disconnect()
-    status.textContent = s"Connecting to ${url}..."
-    val ws = new dom.WebSocket(url)
+    status.textContent = s"Connecting to ${serverUrl}..."
+    val ws = new dom.WebSocket(serverUrl)
     socket = Some(ws)
     ws.onopen = _ =>
       status.textContent = "Connected. Joining lobby..."
@@ -280,9 +299,13 @@ private final class BrowserApp:
         status.textContent = "Unknown server message."
 
   private def parseWaiting(msg: js.Dynamic): WaitingState =
+    val master = msg.master.asInstanceOf[String]
     val players = msg.players.asInstanceOf[js.Array[String]].toList
     val needed = msg.needed.asInstanceOf[Int]
-    WaitingState(players, needed)
+    val isMaster = msg.isMaster.asInstanceOf[Boolean]
+    val canStart = msg.canStart.asInstanceOf[Boolean]
+    val isPlaying = msg.isPlaying.asInstanceOf[Boolean]
+    WaitingState(master, players, needed, isMaster, canStart, isPlaying)
 
   private def parseState(msg: js.Dynamic): RemoteState =
     val hand = msg.hand.asInstanceOf[js.Array[String]].toList
@@ -315,6 +338,9 @@ private final class BrowserApp:
 
   private def sendPass(): Unit =
     sendJson(js.Dynamic.literal(tag = "pass"))
+
+  private def sendStart(): Unit =
+    sendJson(js.Dynamic.literal(tag = "start"))
 
   private def sendJson(value: js.Any): Unit =
     socket.foreach(_.send(js.JSON.stringify(value)))

@@ -9,6 +9,7 @@ import zio.json.*
 sealed trait ClientMessage
 object ClientMessage:
   @jsonHint("join")  case class Join(name: String)        extends ClientMessage
+  @jsonHint("start") case class Start()                   extends ClientMessage
   @jsonHint("play")  case class Play(cards: List[String]) extends ClientMessage
   @jsonHint("pass")  case class Pass()                    extends ClientMessage
 
@@ -23,7 +24,14 @@ case class RankingEntry(role: String, name: String) derives JsonEncoder
 sealed trait ServerMessage
 object ServerMessage:
   @jsonHint("waiting")
-  case class Waiting(players: List[String], needed: Int) extends ServerMessage
+  case class Waiting(
+    master: String,
+    players: List[String],
+    needed: Int,
+    isMaster: Boolean,
+    canStart: Boolean,
+    isPlaying: Boolean
+  ) extends ServerMessage
 
   @jsonHint("state")
   case class State(

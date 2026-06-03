@@ -59,6 +59,11 @@ object GameServer:
               .flatMap(id => pidRef.set(Some(id)))
               .catchAll(err => out.offer(ServerMessage.Error(err)).unit)
         }
+      case ClientMessage.Start() =>
+        pidRef.get.flatMap {
+          case None     => out.offer(ServerMessage.Error("Rejoignez d'abord la partie.")).unit
+          case Some(id) => room.start(id).catchAll(err => out.offer(ServerMessage.Error(err)).unit)
+        }
       case ClientMessage.Play(cards) =>
         pidRef.get.flatMap {
           case None     => out.offer(ServerMessage.Error("Rejoignez d'abord la partie.")).unit
