@@ -29,6 +29,7 @@ object ServerMessage:
   case class State(
     hand: List[String],
     table: Option[String],
+    tableCards: List[String],
     currentPlayer: String,
     isYourTurn: Boolean,
     players: List[PlayerInfo],

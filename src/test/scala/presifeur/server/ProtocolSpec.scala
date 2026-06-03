@@ -71,6 +71,7 @@ class ProtocolSpec extends AnyFlatSpec with Matchers:
     val msg: ServerMessage = ServerMessage.State(
       hand          = List("3♠", "5♥"),
       table         = Some("5 x2"),
+        tableCards    = List("5♥", "5♠"),
       currentPlayer = "Alice",
       isYourTurn    = true,
       players       = List(PlayerInfo("Alice", 17, true), PlayerInfo("Bob", 18, false)),
@@ -82,9 +83,10 @@ class ProtocolSpec extends AnyFlatSpec with Matchers:
     json should include(""""currentPlayer":"Alice"""")
     json should include(""""table":"5 x2"""")
 
+      json should include(""""tableCards":["5♥","5♠"]""")
   it should "omettre le champ table quand la table est vide" in:
     val msg: ServerMessage = ServerMessage.State(
-      List("3♠"), None, "Alice", true, Nil, 1
+      List("3♠"), None, Nil, "Alice", true, Nil, 1
     )
     msg.toJson should not include "\"table\""
 

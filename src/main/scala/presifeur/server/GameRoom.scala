@@ -93,6 +93,7 @@ class GameRoom private (stateRef: Ref[RoomState], val minPlayers: Int):
       val msg = ServerMessage.State(
         hand          = player.hand.map(_.toString),
         table         = game.lastPlay.map(p => s"${p.rank.courte} x${p.size}"),
+        tableCards    = game.lastPlay.map(_.cards.map(_.toString)).getOrElse(Nil),
         currentPlayer = game.currentPlayer.name,
         isYourTurn    = game.currentPlayerIdx == playerId,
         players       = game.players.map(p =>
