@@ -17,7 +17,13 @@ object BrowserApp:
 private final class BrowserApp:
 
   private var threeScene: Option[ThreeScene] = None
-  private val serverUrl = "ws://localhost:8080/game"
+  private val serverUrl =
+    val loc = dom.window.location
+    if loc.protocol == "file:" then
+      "ws://localhost:8080/game"
+    else
+      val wsProtocol = if loc.protocol == "https:" then "wss:" else "ws:"
+      s"$wsProtocol//${loc.host}/game"
   private val socket = new GameSocket(this, serverUrl)
 
   private var waitingState: Option[WaitingState] = None
@@ -191,7 +197,7 @@ private final class BrowserApp:
     remoteState = None
     remoteRankings = None
     selectedRemoteCards = Set.empty
-    status.textContent = s"Exchange phase: you are ${state.role}"
+    status.textContent = s"Exchange phase: you are ${formatRole(state.role)}"
     render()
 
   def onErrorReceived(message: String): Unit =
@@ -201,6 +207,12 @@ private final class BrowserApp:
     resetRemoteState()
     status.textContent = "Disconnected from server."
     render()
+
+  private def formatRole(role: String): String =
+    role match
+      case "Président" => "Présifeur"
+      case "Trouduc"   => "Troudufeur"
+      case other       => other
 
   private def resetRemoteState(): Unit =
     waitingState = None
@@ -272,14 +284,14 @@ private final class BrowserApp:
           </div>
         """
         turnLabel.textContent = "Exchange phase"
-        tableLabel.textContent = s"Giving cards to: ${exchange.target}"
+        tableLabel.textContent = s"Giving cards to: ${formatRole(exchange.target)}"
         selectedLabel.textContent =
           s"Selected: ${selectedRemoteCards.toList.sorted.mkString(", ")}"
         if exchange.isYourTurn then
           playersArea.innerHTML = s"""
             <div class='exchange-info'>
-              <h4>You are the <strong>${exchange.role}</strong></h4>
-              <p>Select exactly <strong>${exchange.count}</strong> cards to give to the <strong>${exchange.target}</strong>.</p>
+              <h4>You are the <strong>${formatRole(exchange.role)}</strong></h4>
+              <p>Select exactly <strong>${exchange.count}</strong> cards to give to the <strong>${formatRole(exchange.target)}</strong>.</p>
             </div>
           """
           renderExchangeHand(exchange)
@@ -293,8 +305,8 @@ private final class BrowserApp:
         else
           val infoText =
             if exchange.role == "Trouduc" then
-              "Your 2 best cards were automatically given to the President. Waiting for the President's choice..."
-            else "The President is choosing 2 cards to give to the Trouduc..."
+              "Your 2 best cards were automatically given to the Présifeur. Waiting for the Présifeur's choice..."
+            else "The Présifeur is choosing 2 cards to give to the Troudufeur..."
           playersArea.innerHTML = s"""
             <div class='exchange-info waiting-mode'>
               <h4>Exchange phase</h4>
@@ -325,6 +337,11 @@ private final class BrowserApp:
             case "Vice-Trouduc"   => "role-vt"
             case _                => "role-neutre"
           }
+          val displayedRole = r.role match {
+            case "Président" => "Présifeur"
+            case "Trouduc"   => "Troudufeur"
+            case other       => other
+          }
           val rankNumber = idx + 1
           val medal = rankNumber match {
             case 1 => "🥇"
@@ -334,7 +351,7 @@ private final class BrowserApp:
           }
           s"""<div class='ranking-item $roleClass'>
                <span class='rank-medal'>$medal</span>
-               <span class='role-badge'>${r.role}</span>
+               <span class='role-badge'>$displayedRole</span>
                <span class='player-name'>${r.name}</span>
              </div>"""
         }.mkString
