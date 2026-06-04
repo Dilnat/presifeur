@@ -38,24 +38,24 @@ private final class BrowserApp:
   private val header = div("hero")
   private val title = h1("Présifeur")
   private val subtitle = p(
-    "A Scala.js + three.js browser version of the card game."
+    "Une version par navigateur du jeu de cartes, avec Scala.js et three.js."
   )
   private val status = div("status")
   private val overlay = div("overlay")
   private val overlayCard = div("overlay-card")
-  private val cancelButton = button("Cancel")
+  private val cancelButton = button("Annuler")
   private val playerNameInput = inputText("")
-  private val connectButton = button("Connect")
+  private val connectButton = button("Se connecter")
   private val errorBox = div("error")
   private val leftPanel = div("panel")
   private val rightPanel = div("panel")
   private val tableArea = div("table-stage")
   private val playersArea = div("players-list")
   private val handArea = div("hand-list")
-  private val playButton = button("Play selected")
-  private val passButton = button("Pass")
-  private val startButton = button("Start game")
-  private val newGameButton = button("Disconnect")
+  private val playButton = button("Jouer les cartes sélectionnées")
+  private val passButton = button("Passer")
+  private val startButton = button("Commencer la partie")
+  private val newGameButton = button("Se déconnecter")
   private val playerTitle = div("player-title-container")
   private val turnLabel = div("turn-label")
   private val tableLabel = div("table-label")
@@ -94,10 +94,10 @@ private final class BrowserApp:
 
   private def installOverlay(): Unit =
     overlay.appendChild(overlayCard)
-    overlayCard.appendChild(h2("Join the game"))
+    overlayCard.appendChild(h2("Rejoindre la partie"))
     overlayCard.appendChild(
       p(
-        "Connect to the shared server lobby. The first player becomes the master and starts the game."
+        "Connectez-vous au salon de jeu. Le premier joueur devient le maître et lance la partie."
       )
     )
     overlayCard.appendChild(playerNameInput)
@@ -107,16 +107,16 @@ private final class BrowserApp:
   private def wireActions(): Unit =
     connectButton.onclick = _ =>
       val name = playerNameInput.value.trim
-      if name.isEmpty then showError("Enter a player name.")
+      if name.isEmpty then showError("Entrez un nom de joueur.")
       else
         clearError()
-        localPlayerName = Some(name)
         socket.connect(name)
+        localPlayerName = Some(name)
 
     cancelButton.onclick = _ =>
       overlay.classList.remove("show")
       if remoteState.isEmpty && waitingState.isEmpty then
-        status.textContent = "No server connection."
+        status.textContent = "Pas de connexion au serveur."
 
     playButton.onclick = _ => playSelected()
     passButton.onclick = _ => passTurn()
@@ -128,11 +128,11 @@ private final class BrowserApp:
 
   private def playSelected(): Unit =
     remoteState match
-      case None => status.textContent = "Connect to a server first."
+      case None => status.textContent = "Connectez-vous d'abord à un serveur."
       case Some(state) if !state.isYourTurn =>
-        status.textContent = "Wait for your turn."
+        status.textContent = "Attendez votre tour."
       case Some(_) if selectedRemoteCards.isEmpty =>
-        status.textContent = "Select one or more cards first."
+        status.textContent = "Sélectionnez d'abord une ou plusieurs cartes."
       case Some(_) =>
         socket.sendPlay(selectedRemoteCards.toList)
         selectedRemoteCards = Set.empty
@@ -140,9 +140,9 @@ private final class BrowserApp:
 
   private def passTurn(): Unit =
     remoteState match
-      case None => status.textContent = "Connect to a server first."
+      case None => status.textContent = "Connectez-vous d'abord à un serveur."
       case Some(state) if !state.isYourTurn =>
-        status.textContent = "Wait for your turn."
+        status.textContent = "Attendez votre tour."
       case Some(_) =>
         socket.sendPass()
 
@@ -151,9 +151,9 @@ private final class BrowserApp:
       case Some(waiting) if waiting.isMaster && !waiting.isPlaying =>
         socket.sendStart()
       case Some(_) =>
-        status.textContent = "Only the master can start the game."
+        status.textContent = "Seul le maître du salon peut lancer la partie."
       case None =>
-        status.textContent = "Connect to a server first."
+        status.textContent = "Connectez-vous d'abord à un serveur."
 
   def onConnectionStatus(message: String): Unit =
     status.textContent = message
@@ -169,7 +169,7 @@ private final class BrowserApp:
     remoteRankings = None
     exchangeState = None
     selectedRemoteCards = Set.empty
-    status.textContent = "Waiting for more players..."
+    status.textContent = "En attente de joueurs..."
     render()
 
   def onStateReceived(state: RemoteState): Unit =
@@ -178,7 +178,7 @@ private final class BrowserApp:
     remoteRankings = None
     exchangeState = None
     selectedRemoteCards = Set.empty
-    status.textContent = "Game in progress."
+    status.textContent = "Partie en cours."
     render()
 
   def onGameOverReceived(rankings: List[RankingEntry], isMasterUser: Boolean): Unit =
@@ -188,7 +188,7 @@ private final class BrowserApp:
     remoteState = None
     exchangeState = None
     selectedRemoteCards = Set.empty
-    status.textContent = "Game over."
+    status.textContent = "Partie terminée."
     render()
 
   def onExchangeReceived(state: ExchangeState): Unit =
@@ -197,7 +197,7 @@ private final class BrowserApp:
     remoteState = None
     remoteRankings = None
     selectedRemoteCards = Set.empty
-    status.textContent = s"Exchange phase: you are ${formatRole(state.role)}"
+    status.textContent = s"Phase d'échange : vous êtes ${formatRole(state.role)}"
     render()
 
   def onErrorReceived(message: String): Unit =
@@ -205,14 +205,16 @@ private final class BrowserApp:
 
   def onDisconnected(): Unit =
     resetRemoteState()
-    status.textContent = "Disconnected from server."
+    status.textContent = "Déconnecté du serveur."
     render()
 
   private def formatRole(role: String): String =
     role match
-      case "Président" => "Présifeur"
-      case "Trouduc"   => "Troudufeur"
-      case other       => other
+      case "Président"      => "Présifeur"
+      case "Trouduc"        => "Troudufeur"
+      case "Vice-Président" => "Vice-Présifeur"
+      case "Vice-Trouduc"   => "Vice-Troudufeur"
+      case other            => other
 
   private def resetRemoteState(): Unit =
     waitingState = None
@@ -225,7 +227,7 @@ private final class BrowserApp:
     renderRemote()
 
   private def renderRemote(): Unit =
-    newGameButton.textContent = "Disconnect"
+    newGameButton.textContent = "Se déconnecter"
     def clearThree(): Unit =
       tableArea.innerHTML = ""
       threeScene = None
@@ -242,61 +244,61 @@ private final class BrowserApp:
       case None =>
         playerTitle.innerHTML = s"""
           <div class="player-avatar offline">?</div>
-          <div class="player-name-text offline">Not Connected</div>
+          <div class="player-name-text offline">Non connecté</div>
           <div class="player-status-dot offline"></div>
         """
     (waitingState, remoteState, remoteRankings, exchangeState) match
       case (Some(waiting), _, _, _) =>
         clearThree()
         turnLabel.textContent =
-          if waiting.isPlaying then s"Waiting for ${waiting.master}"
-          else s"Lobby - ${waiting.master} is master"
-        tableLabel.textContent = "Table: waiting"
-        selectedLabel.textContent = "Selected: none"
+          if waiting.isPlaying then s"En attente de ${waiting.master}"
+          else s"Salon - ${waiting.master} est le maître"
+        tableLabel.textContent = "Table : en attente"
+        selectedLabel.textContent = "Sélection : aucune"
         playersArea.innerHTML = waiting.players
           .map(name => s"<div class='player'>$name</div>")
           .mkString
         handArea.innerHTML =
           if waiting.isPlaying then
-            s"<div class='muted'>Game in progress. You will join the next one.</div>"
+            s"<div class='muted'>Partie en cours. Vous rejoindrez la suivante.</div>"
           else
             val readiness =
               if waiting.needed > 0 then
-                s"Need ${waiting.needed} more player(s)."
-              else "Ready to start."
+                s"Besoin de ${waiting.needed} joueur(s) supplémentaire(s)."
+              else "Prêt à commencer."
             if waiting.isMaster then
-              s"<div class='muted'>$readiness You control the start.</div>"
+              s"<div class='muted'>$readiness Vous contrôlez le lancement.</div>"
             else
-              s"<div class='muted'>$readiness Waiting for ${waiting.master} to start.</div>"
+              s"<div class='muted'>$readiness En attente du lancement par ${waiting.master}.</div>"
         tableArea.innerHTML =
-          "<div class='table-text muted'>Waiting for players...</div>"
+          "<div class='table-text muted'>En attente de joueurs...</div>"
         playButton.disabled = true
         passButton.disabled = true
-        startButton.textContent = "Start game"
+        startButton.textContent = "Commencer la partie"
         startButton.disabled = !waiting.isMaster || waiting.isPlaying
         startButton.onclick = _ => startGame()
       case (_, _, _, Some(exchange)) =>
         clearThree()
         tableArea.innerHTML = s"""
           <div class='exchange-banner'>
-            <h2>Exchange Phase</h2>
-            <p>Waiting for the exchange of cards to complete...</p>
+            <h2>Phase d'échange</h2>
+            <p>En attente de la fin de l'échange de cartes...</p>
           </div>
         """
-        turnLabel.textContent = "Exchange phase"
-        tableLabel.textContent = s"Giving cards to: ${formatRole(exchange.target)}"
+        turnLabel.textContent = "Phase d'échange"
+        tableLabel.textContent = s"Donner des cartes à : ${formatRole(exchange.target)}"
         selectedLabel.textContent =
-          s"Selected: ${selectedRemoteCards.toList.sorted.mkString(", ")}"
+          s"Sélection : ${selectedRemoteCards.toList.sorted.mkString(", ")}"
         if exchange.isYourTurn then
           playersArea.innerHTML = s"""
             <div class='exchange-info'>
-              <h4>You are the <strong>${formatRole(exchange.role)}</strong></h4>
-              <p>Select exactly <strong>${exchange.count}</strong> cards to give to the <strong>${formatRole(exchange.target)}</strong>.</p>
+              <h4>Vous êtes le <strong>${formatRole(exchange.role)}</strong></h4>
+              <p>Sélectionnez exactement <strong>${exchange.count}</strong> carte(s) à donner au <strong>${formatRole(exchange.target)}</strong>.</p>
             </div>
           """
           renderExchangeHand(exchange)
           playButton.disabled = selectedRemoteCards.size != exchange.count
-          playButton.textContent = s"Give ${exchange.count} cards"
+          playButton.textContent = s"Donner ${exchange.count} carte(s)"
           playButton.onclick = _ => {
             socket.sendExchange(selectedRemoteCards.toList)
             selectedRemoteCards = Set.empty
@@ -305,11 +307,14 @@ private final class BrowserApp:
         else
           val infoText =
             if exchange.role == "Trouduc" then
-              "Your 2 best cards were automatically given to the Présifeur. Waiting for the Présifeur's choice..."
-            else "The Présifeur is choosing 2 cards to give to the Troudufeur..."
+              "Vos 2 meilleures cartes ont été données automatiquement au Présifeur. En attente du choix du Présifeur..."
+            else if exchange.role == "Vice-Trouduc" then
+              "Votre meilleure carte a été donnée automatiquement au Vice-Présifeur. En attente du choix du Vice-Présifeur..."
+            else
+              "Les Présifeurs choisissent les cartes à échanger..."
           playersArea.innerHTML = s"""
             <div class='exchange-info waiting-mode'>
-              <h4>Exchange phase</h4>
+              <h4>Phase d'échange</h4>
               <p>$infoText</p>
             </div>
           """
@@ -320,15 +325,15 @@ private final class BrowserApp:
             handArea.appendChild(btn)
           }
           playButton.disabled = true
-          playButton.textContent = "Confirm exchange"
+          playButton.textContent = "Confirmer l'échange"
         passButton.disabled = true
-        startButton.textContent = "Start game"
+        startButton.textContent = "Commencer la partie"
         startButton.disabled = true
       case (_, _, Some(rankings), _) =>
         clearThree()
-        turnLabel.textContent = "Game over"
-        tableLabel.textContent = "Table: cleared"
-        selectedLabel.textContent = "Selected: none"
+        turnLabel.textContent = "Partie terminée"
+        tableLabel.textContent = "Table : vide"
+        selectedLabel.textContent = "Sélection : aucune"
         val rankHtml = rankings.zipWithIndex.map { case (r, idx) =>
           val roleClass = r.role match {
             case "Président"      => "role-president"
@@ -337,11 +342,7 @@ private final class BrowserApp:
             case "Vice-Trouduc"   => "role-vt"
             case _                => "role-neutre"
           }
-          val displayedRole = r.role match {
-            case "Président" => "Présifeur"
-            case "Trouduc"   => "Troudufeur"
-            case other       => other
-          }
+          val displayedRole = formatRole(r.role)
           val rankNumber = idx + 1
           val medal = rankNumber match {
             case 1 => "🥇"
@@ -356,16 +357,16 @@ private final class BrowserApp:
              </div>"""
         }.mkString
         playersArea.innerHTML =
-          s"<h3>Rankings</h3><div class='rankings-list'>$rankHtml</div>"
+          s"<h3>Classement</h3><div class='rankings-list'>$rankHtml</div>"
         handArea.innerHTML =
           if isMaster then
-            s"<div class='muted'>Click 'Start next game' to start the exchange phase.</div>"
+            s"<div class='muted'>Cliquez sur 'Lancer la partie suivante' pour démarrer la phase d'échange.</div>"
           else
-            s"<div class='muted'>Waiting for the master to start the next game...</div>"
+            s"<div class='muted'>En attente du lancement de la partie suivante par le maître...</div>"
         tableArea.innerHTML = s"""
           <div class='game-over-banner'>
-            <h2>Game Over</h2>
-            <p>The rankings have been assigned for the next game:</p>
+            <h2>Partie terminée</h2>
+            <p>Les rôles ont été attribués pour la partie suivante :</p>
             <div class='rankings-main-list'>
               $rankHtml
             </div>
@@ -373,36 +374,47 @@ private final class BrowserApp:
         """
         playButton.disabled = true
         passButton.disabled = true
-        startButton.textContent = "Start next game"
+        startButton.textContent = "Lancer la partie suivante"
         startButton.disabled = !isMaster
         startButton.onclick = _ => socket.sendStart()
       case (_, Some(state), _, _) =>
-        turnLabel.textContent = s"Turn: ${state.currentPlayer}"
+        turnLabel.textContent = s"Tour : ${state.currentPlayer}"
         tableLabel.textContent =
-          state.table.fold("Table: empty")(t => s"Table: $t")
+          state.table.fold("Table : vide")(t => s"Table : $t")
         selectedLabel.textContent =
-          if selectedRemoteCards.isEmpty then "Selected: none"
-          else s"Selected: ${selectedRemoteCards.toList.sorted.mkString(", ")}"
+          if selectedRemoteCards.isEmpty then "Sélection : aucune"
+          else s"Sélection : ${selectedRemoteCards.toList.sorted.mkString(", ")}"
         playersArea.innerHTML = state.players.map { p =>
           val current = if p.isCurrentPlayer then " current" else ""
-          s"<div class='player$current'>${p.name} - ${p.cardCount} cards</div>"
+          val roleClass = p.role.fold("") {
+            case "Président"      => " role-president"
+            case "Vice-Président" => " role-vp"
+            case "Trouduc"        => " role-trouduc"
+            case "Vice-Trouduc"   => " role-vt"
+            case _                => " role-neutre"
+          }
+          val badge = p.role.fold("") { r =>
+            val formatted = formatRole(r)
+            s" <span class='role-badge' style='margin-left: 8px;'>$formatted</span>"
+          }
+          s"<div class='player$current$roleClass'>${p.name}$badge - ${p.cardCount} carte(s)</div>"
         }.mkString
         renderRemoteHand(state)
         renderRemoteThree(state)
         playButton.disabled = selectedRemoteCards.isEmpty || !state.isYourTurn
-        playButton.textContent = "Play selected"
+        playButton.textContent = "Jouer les cartes sélectionnées"
         playButton.onclick = _ => playSelected()
         passButton.disabled = !state.isYourTurn
         startButton.disabled = true
       case _ =>
         clearThree()
-        turnLabel.textContent = "Waiting for server"
-        tableLabel.textContent = "Table: empty"
-        selectedLabel.textContent = "Selected: none"
+        turnLabel.textContent = "En attente du serveur"
+        tableLabel.textContent = "Table : vide"
+        selectedLabel.textContent = "Sélection : aucune"
         playersArea.innerHTML = ""
         handArea.innerHTML = ""
         tableArea.innerHTML =
-          "<div class='table-text muted'>Connect to a server to begin.</div>"
+          "<div class='table-text muted'>Connectez-vous à un serveur pour commencer.</div>"
         playButton.disabled = true
         passButton.disabled = true
         startButton.disabled = true
