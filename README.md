@@ -1,6 +1,6 @@
-# Presifeur 🃏
+# Présifeur 🃏
 
-Presifeur is a modern implementation of the classic French card shedding game **Président** (also known as *Trouduc*, or *Asshole* / *Scum* / *Landlord* in English). 
+Présifeur is a modern implementation of the classic French card shedding game **Président**.
 
 The project features a **shared game engine**, a ZIO-powered **multiplayer server**, a terminal **CLI client**, and a web client using **Scala.js** with an interactive **3D table rendering using Three.js**.
 

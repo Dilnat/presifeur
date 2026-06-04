@@ -24,7 +24,11 @@ private case class ExchangeState(
     presidentId: Int,
     trouducId: Int,
     presidentCards: Option[List[Card]] = None,
-    trouducCards: Option[List[Card]] = None
+    trouducCards: Option[List[Card]] = None,
+    vpId: Option[Int] = None,
+    vtId: Option[Int] = None,
+    vpCards: Option[List[Card]] = None,
+    vtCards: Option[List[Card]] = None
 )
 
 private case class RoomState(
@@ -108,22 +112,35 @@ class GameRoom private (stateRef: Ref[RoomState], val minPlayers: Int):
                 val playersWithRoles = baseGame.players
                   .map(p => p.copy(role = rolesByName.get(p.name)))
 
-                // Identify President and Trouduc for exchange
+                // Identify President, Trouduc, Vice-President, and Vice-Trouduc for exchange
                 val president =
                   playersWithRoles.find(_.role.contains(Role.President))
                 val trouduc =
                   playersWithRoles.find(_.role.contains(Role.Trouduc))
+                val vp =
+                  playersWithRoles.find(_.role.contains(Role.VicePresident))
+                val vt =
+                  playersWithRoles.find(_.role.contains(Role.ViceTrouduc))
 
                 val (updatedGame, exchangeStateOpt) =
                   (president, trouduc) match {
                     case (Some(p), Some(t)) =>
                       val bestCards =
                         t.hand.sortBy(_.rank.value).reverse.take(2)
+                      val vtBestCards = for {
+                        vtPlayer <- vt
+                        vpPlayer <- vp
+                      } yield vtPlayer.hand.sortBy(_.rank.value).reverse.take(1)
+
                       val exState = ExchangeState(
                         presidentId = p.id,
                         trouducId = t.id,
                         presidentCards = None,
-                        trouducCards = Some(bestCards)
+                        trouducCards = Some(bestCards),
+                        vpId = vp.map(_.id),
+                        vtId = vt.map(_.id),
+                        vpCards = None,
+                        vtCards = vtBestCards
                       )
                       (
                         baseGame.copy(
@@ -357,12 +374,25 @@ class GameRoom private (stateRef: Ref[RoomState], val minPlayers: Int):
             )
           case Some(gamePlayerId) =>
             val player = active.game.players(gamePlayerId)
-            if parsed.size != 2 then
+            val isPresident = gamePlayerId == ex.presidentId
+            val isVP = ex.vpId.contains(gamePlayerId)
+            val expectedCount = if isPresident then 2 else if isVP then 1 else 0
+
+            if expectedCount == 0 then
               (
                 sendTo(
                   state.lobby,
                   playerId,
-                  ServerMessage.Error("Vous devez choisir exactement 2 cartes.")
+                  ServerMessage.Error("Vous n'êtes pas autorisé à choisir des cartes pour l'échange.")
+                ),
+                state
+              )
+            else if parsed.size != expectedCount then
+              (
+                sendTo(
+                  state.lobby,
+                  playerId,
+                  ServerMessage.Error(s"Vous devez choisir exactement $expectedCount carte(s).")
                 ),
                 state
               )
@@ -375,41 +405,50 @@ class GameRoom private (stateRef: Ref[RoomState], val minPlayers: Int):
                 ),
                 state
               )
-            else if gamePlayerId != ex.presidentId then
-              (
-                sendTo(
-                  state.lobby,
-                  playerId,
-                  ServerMessage.Error("Seul le Président choisit ses cartes.")
-                ),
-                state
-              )
             else
-              val updatedEx = ex.copy(presidentCards = Some(parsed))
+              val updatedEx = if isPresident then
+                ex.copy(presidentCards = Some(parsed))
+              else
+                ex.copy(vpCards = Some(parsed))
 
-              if updatedEx.presidentCards.isDefined && updatedEx.trouducCards.isDefined
-              then
+              val isPresidentDone = updatedEx.presidentCards.isDefined && updatedEx.trouducCards.isDefined
+              val isVPDone = updatedEx.vpId.forall(_ => updatedEx.vpCards.isDefined && updatedEx.vtCards.isDefined)
+
+              if isPresidentDone && isVPDone then
+                // Perform President/Trouduc swap
+                val pIdx = ex.presidentId
+                val tIdx = ex.trouducId
                 val pCards = updatedEx.presidentCards.get
                 val tCards = updatedEx.trouducCards.get
 
-                val pIdx = ex.presidentId
-                val tIdx = ex.trouducId
+                var playersList = active.game.players
+                val pPlayer = playersList(pIdx)
+                val tPlayer = playersList(tIdx)
 
-                val pPlayer = active.game.players(pIdx)
-                val tPlayer = active.game.players(tIdx)
+                val newPHand = (pPlayer.hand.filterNot(pCards.contains) ++ tCards).sortBy(_.rank.value)
+                val newTHand = (tPlayer.hand.filterNot(tCards.contains) ++ pCards).sortBy(_.rank.value)
 
-                val newPHand =
-                  (pPlayer.hand.filterNot(c => pCards.contains(c)) ++ tCards)
-                    .sortBy(_.rank.value)
-                val newTHand =
-                  (tPlayer.hand.filterNot(c => tCards.contains(c)) ++ pCards)
-                    .sortBy(_.rank.value)
-
-                val newPlayers = active.game.players
+                playersList = playersList
                   .updated(pIdx, pPlayer.copy(hand = newPHand))
                   .updated(tIdx, tPlayer.copy(hand = newTHand))
 
-                val firstIdx = newPlayers.indexWhere(
+                // Perform VP/VT swap if they exist
+                for {
+                  vpId <- ex.vpId
+                  vtId <- ex.vtId
+                  vpCards <- updatedEx.vpCards
+                  vtCards <- updatedEx.vtCards
+                } {
+                  val vpPlayer = playersList(vpId)
+                  val vtPlayer = playersList(vtId)
+                  val newVpHand = (vpPlayer.hand.filterNot(vpCards.contains) ++ vtCards).sortBy(_.rank.value)
+                  val newVtHand = (vtPlayer.hand.filterNot(vtCards.contains) ++ vpCards).sortBy(_.rank.value)
+                  playersList = playersList
+                    .updated(vpId, vpPlayer.copy(hand = newVpHand))
+                    .updated(vtId, vtPlayer.copy(hand = newVtHand))
+                }
+
+                val firstIdx = playersList.indexWhere(
                   _.hand.exists(c =>
                     c.rank == Rank.Trois && c.suit == Suit.Trefles
                   )
@@ -419,7 +458,7 @@ class GameRoom private (stateRef: Ref[RoomState], val minPlayers: Int):
                   else active.game.currentPlayerIdx
 
                 val newGame = active.game.copy(
-                  players = newPlayers,
+                  players = playersList,
                   currentPlayerIdx = startingPlayerIdx,
                   isExchangePhase = false
                 )
@@ -468,21 +507,30 @@ class GameRoom private (stateRef: Ref[RoomState], val minPlayers: Int):
           val target =
             if playerId == ex.presidentId then "Trouduc"
             else if playerId == ex.trouducId then "Président"
+            else if ex.vpId.contains(playerId) then "Vice-Trouduc"
+            else if ex.vtId.contains(playerId) then "Vice-Président"
             else ""
           val count =
-            if playerId == ex.presidentId || playerId == ex.trouducId then 2
+            if playerId == ex.presidentId then 2
+            else if ex.vpId.contains(playerId) then 1
             else 0
-          val isPresidentTurn = playerId == ex.presidentId
+          val isYourTurn =
+            if playerId == ex.presidentId then ex.presidentCards.isEmpty
+            else if ex.vpId.contains(playerId) then ex.vpCards.isEmpty
+            else false
           val msg = ServerMessage.Exchange(
             role = role,
             target = target,
             count = count,
-            isYourTurn = isPresidentTurn,
+            isYourTurn = isYourTurn,
             hand = game.players(playerId).hand.map(_.toString)
           )
           queue.offer(msg).unit
         case None =>
           val player = game.players(playerId)
+          val tempFinishOrder = game.finishOrder ++ game.activePlayers.map(_.id).toList
+          val currentRanked = GameEngine.assignRoles(tempFinishOrder, game.players, game.autoTrouduc)
+          val roleMap = currentRanked.map(p => p.id -> p.role).toMap
           val msg = ServerMessage.State(
             hand = player.hand.map(_.toString),
             table = game.lastPlay.map(p => s"${p.rank.courte} x${p.size}"),
@@ -492,7 +540,8 @@ class GameRoom private (stateRef: Ref[RoomState], val minPlayers: Int):
             isYourTurn = game.currentPlayerIdx == playerId,
             players = game.players
               .map(p =>
-                PlayerInfo(p.name, p.cardCount, p.id == game.currentPlayerIdx)
+                val roleStr = if !p.hasCards then roleMap.getOrElse(p.id, None).map(_.nom) else None
+                PlayerInfo(p.name, p.cardCount, p.id == game.currentPlayerIdx, roleStr)
               )
               .toList,
             round = game.round

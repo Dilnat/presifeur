@@ -12,7 +12,8 @@ case class WaitingState(
 case class RemotePlayer(
     name: String,
     cardCount: Int,
-    isCurrentPlayer: Boolean
+    isCurrentPlayer: Boolean,
+    role: Option[String] = None
 )
 
 case class RemoteState(

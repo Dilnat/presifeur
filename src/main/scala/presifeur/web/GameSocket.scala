@@ -9,17 +9,17 @@ final class GameSocket(app: BrowserApp, serverUrl: String):
 
   def connect(name: String): Unit =
     disconnect()
-    app.onConnectionStatus(s"Connecting to $serverUrl...")
+    app.onConnectionStatus(s"Connexion à $serverUrl...")
     val ws = new dom.WebSocket(serverUrl)
     socket = Some(ws)
     ws.onopen = _ =>
-      app.onConnectionStatus("Connected. Joining lobby...")
+      app.onConnectionStatus("Connecté. Entrée dans le salon...")
       sendJoin(name)
       app.onConnected()
     ws.onmessage = (event: dom.MessageEvent) =>
       handleServerMessage(event.data.toString)
     ws.onerror = _ =>
-      app.onConnectionStatus("Connection error.")
+      app.onConnectionStatus("Erreur de connexion.")
     ws.onclose = _ =>
       if socket.contains(ws) then
         socket = None
@@ -66,7 +66,7 @@ final class GameSocket(app: BrowserApp, serverUrl: String):
         val message = msg.message.asInstanceOf[String]
         app.onErrorReceived(message)
       case _ =>
-        app.onErrorReceived("Unknown server message.")
+        app.onErrorReceived("Message du serveur inconnu.")
 
   private def parseWaiting(msg: js.Dynamic): WaitingState =
     val master = msg.master.asInstanceOf[String]
@@ -92,7 +92,8 @@ final class GameSocket(app: BrowserApp, serverUrl: String):
         RemotePlayer(
           name = p.name.asInstanceOf[String],
           cardCount = p.cardCount.asInstanceOf[Int],
-          isCurrentPlayer = p.isCurrentPlayer.asInstanceOf[Boolean]
+          isCurrentPlayer = p.isCurrentPlayer.asInstanceOf[Boolean],
+          role = if js.isUndefined(p.role) || p.role == null then None else Some(p.role.asInstanceOf[String])
         )
       }
     val round = msg.round.asInstanceOf[Int]

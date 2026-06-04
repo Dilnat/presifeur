@@ -19,8 +19,12 @@ object ClientMessage:
 
 // ── Serveur → Client ─────────────────────────────────────────────────────────
 
-case class PlayerInfo(name: String, cardCount: Int, isCurrentPlayer: Boolean)
-    derives JsonEncoder
+case class PlayerInfo(
+    name: String,
+    cardCount: Int,
+    isCurrentPlayer: Boolean,
+    role: Option[String] = None
+) derives JsonEncoder
 case class RankingEntry(role: String, name: String) derives JsonEncoder
 
 @jsonDiscriminator("tag")
