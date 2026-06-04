@@ -8,9 +8,17 @@ import zio.stream.ZStream
 
 object GameServer:
 
+  private def serveFile(path: String): Handler[Any, Nothing, Any, Response] =
+    Handler.fromFile(new java.io.File(path))
+      .catchAll(_ => Handler.succeed(Response.status(Status.NotFound)))
+
   def routes(room: GameRoom): Routes[Any, Nothing] =
     Routes(
-      Method.GET / "game" -> Handler.fromFunctionZIO[Request](_ => wsHandler(room).toResponse)
+      Method.GET / "game" -> Handler.fromFunctionZIO[Request](_ => wsHandler(room).toResponse),
+      Method.GET / Root -> serveFile("index.html"),
+      Method.GET / "style.css" -> serveFile("style.css"),
+      Method.GET / "target" / "scala-3.4.2" / "presifeur-fastopt" / "main.js" -> serveFile("target/scala-3.4.2/presifeur-fastopt/main.js"),
+      Method.GET / "target" / "scala-3.4.2" / "presifeur-fastopt" / "main.js.map" -> serveFile("target/scala-3.4.2/presifeur-fastopt/main.js.map")
     )
 
   private def wsHandler(room: GameRoom): WebSocketApp[Any] =
