@@ -9,7 +9,8 @@ case class GameState(
   round: Int,
   sameRankStreak: Int = 0,
   autoTrouduc: List[Int] = Nil,
-  currentRankCount: Int = 0   // total de cartes du rang actuel jouées dans la manche
+  currentRankCount: Int = 0,
+  isExchangePhase: Boolean = false
 ):
   def currentPlayer: Player = players(currentPlayerIdx)
   def activePlayers: Vector[Player] = players.filter(_.hasCards)
